@@ -1,0 +1,426 @@
+# Proxy ESPHome — Rain Pure Vision 2.0 (2 zones)
+#
+# Intégration BLE non officielle, construite par rétro-ingénierie de
+# l'application officielle Rain Vision. Voir le README pour les détails,
+# les limitations connues, et comment contribuer.
+#
+# ⚠️ Pensez à :
+#   1. Remplacer l'adresse MAC ci-dessous par celle de VOTRE boîtier
+#      (bloc ble_client:, un peu plus bas)
+#   2. Créer un secrets.yaml avec wifi_ssid / wifi_password /
+#      ap_fallback_password / api_encryption_key (voir README)
+#   3. Adapter max_value de "Zone à arroser" si votre boîtier n'a pas
+#      2 zones
+
+esphome:
+  name: proxy-arrosage
+  friendly_name: Proxy Arrosage
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  homeassistant_services: true
+  custom_services: true
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: Proxy Arrosage Fallback Hotspot
+    password: !secret ap_fallback_password
+
+captive_portal:
+
+esp32_ble:
+  io_capability: none
+
+# Scan passif peu agressif : le boîtier limite lui-même chaque session BLE
+# à ~60s (comportement du firmware, pas un problème de scan ESP32).
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 120ms
+    active: false
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Paris" # à adapter si nécessaire
+    on_time_sync:
+      - if:
+          condition:
+            binary_sensor.is_on: ble_connecte
+          then:
+            - script.execute: sync_device_time
+
+ble_client:
+  - mac_address: "XX:XX:XX:XX:XX:XX" # <-- Remplacez par l'adresse MAC de votre boîtier
+    id: rain_pure_vision
+    on_connect:
+      - binary_sensor.template.publish:
+          id: ble_connecte
+          state: ON
+      # Délai nécessaire : on_connect part avant la fin du GATT discovery.
+      - delay: 2s
+      - script.execute: sync_device_time
+      - delay: 400ms
+      - component.update: offperiods_raw_sensor
+      - delay: 300ms
+      - component.update: status_raw
+    on_disconnect:
+      - binary_sensor.template.publish:
+          id: ble_connecte
+          state: OFF
+
+# Cache de la dernière trame OFFPERIODS lue (2 off-periods + bitmask météo
+# sur 14 octets). L'app officielle relit toujours cette trame avant d'en
+# modifier une partie, pour ne pas écraser les données non concernées —
+# on reproduit ce comportement.
+globals:
+  - id: offperiods_raw
+    type: std::vector<uint8_t>
+    restore_value: false
+    initial_value: '{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}'
+  - id: offperiods_valid
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
+script:
+  # TIME : timestamp local encodé en big-endian sur 4 octets
+  # (unix UTC + offset local + 2s de marge), écrit à chaque connexion.
+  - id: sync_device_time
+    mode: restart
+    then:
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F004-4201-37BB-EA11-42A458AA4846' # TIME
+          value: !lambda |-
+            auto t = id(sntp_time).now();
+            if (!t.is_valid()) {
+              ESP_LOGW("rain", "TIME: SNTP pas prêt, skip");
+              return {};
+            }
+            time_t utc = t.timestamp;
+            struct tm gt{};
+            gmtime_r(&utc, &gt);
+            int local_s = t.hour * 3600 + t.minute * 60 + t.second;
+            int utc_s = gt.tm_hour * 3600 + gt.tm_min * 60 + gt.tm_sec;
+            int offset = local_s - utc_s;
+            if (offset >  12 * 3600) offset -= 86400;
+            if (offset < -12 * 3600) offset += 86400;
+            uint32_t device_time = (uint32_t) (utc + offset + 2);
+            return std::vector<uint8_t>{
+              (uint8_t) ((device_time >> 24) & 0xFF),
+              (uint8_t) ((device_time >> 16) & 0xFF),
+              (uint8_t) ((device_time >>  8) & 0xFF),
+              (uint8_t) ( device_time        & 0xFF)
+            };
+
+  - id: do_pause
+    mode: single
+    then:
+      # Relecture d'OFFPERIODS avant écriture, comme le fait l'app officielle.
+      - component.update: offperiods_raw_sensor
+      - delay: 800ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200E003-4201-37BB-EA11-42A458AA4846' # OFFPERIODS
+          value: !lambda |-
+            auto time = id(sntp_time).now();
+            if (!time.is_valid()) {
+              ESP_LOGW("rain", "Temps non synchronisé, pause annulée");
+              return {};
+            }
+            std::vector<uint8_t> frame(14, 0);
+            if (id(offperiods_valid) && id(offperiods_raw).size() >= 14) {
+              frame.assign(id(offperiods_raw).begin(), id(offperiods_raw).begin() + 14);
+            }
+            int days = (int) id(duree_pause).state;
+            frame[0] = (uint8_t) (time.year - 1970);
+            frame[1] = (uint8_t) (time.month - 1);
+            frame[2] = (uint8_t) (time.day_of_month - 1);
+            frame[3] = (uint8_t) (days / 256);
+            frame[4] = (uint8_t) (days % 256);
+            id(offperiods_raw) = frame;
+            id(offperiods_valid) = true;
+            return frame;
+      - delay: 2s
+      - component.update: offperiods_raw_sensor # relecture réelle -> vérification
+
+  - id: do_unpause
+    mode: single
+    then:
+      - component.update: offperiods_raw_sensor
+      - delay: 800ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200E003-4201-37BB-EA11-42A458AA4846'
+          value: !lambda |-
+            std::vector<uint8_t> frame(14, 0);
+            if (id(offperiods_valid) && id(offperiods_raw).size() >= 14) {
+              frame.assign(id(offperiods_raw).begin(), id(offperiods_raw).begin() + 14);
+            }
+            frame[0] = 0;
+            frame[1] = 0;
+            frame[2] = 0;
+            frame[3] = 0;
+            frame[4] = 0;
+            id(offperiods_raw) = frame;
+            id(offperiods_valid) = true;
+            return frame;
+      - delay: 2s
+      - component.update: offperiods_raw_sensor
+
+number:
+  - platform: template
+    name: "Zone à arroser"
+    id: zone_manuelle
+    icon: "mdi:sprinkler-variant"
+    entity_category: config
+    min_value: 1
+    max_value: 2 # boîtier 2 zones — à adapter si besoin
+    step: 1
+    initial_value: 1
+    optimistic: true
+
+  - platform: template
+    name: "Durée arrosage manuel"
+    id: duree_arrosage
+    icon: "mdi:timer-outline"
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 1
+    max_value: 60
+    step: 1
+    initial_value: 10
+    optimistic: true
+
+  - platform: template
+    name: "Durée de la pause"
+    id: duree_pause
+    icon: "mdi:calendar-clock"
+    entity_category: config
+    unit_of_measurement: "j"
+    min_value: 1
+    max_value: 14
+    step: 1
+    initial_value: 1
+    optimistic: true
+
+sensor:
+  # Décodage de la caractéristique STATUS (voir README pour le détail
+  # des offsets). CURR_ZONE_LASTING_TIME (x[10:12]) est en SECONDES,
+  # pas en minutes malgré son nom.
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: rain_pure_vision
+    id: status_raw
+    name: "FSM state"
+    icon: "mdi:state-machine"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+    characteristic_uuid: '0200E001-4201-37BB-EA11-42A458AA4846' # STATUS
+    notify: true
+    update_interval: 30s
+    lambda: |-
+      if (x.size() < 8) return NAN;
+      uint8_t fsm_state = x[7]; // 1 = délai avant départ, 2 = cycle terminé
+
+      if (x.size() >= 21) {
+        id(binsens_pluie).publish_state(x[6] > 0);
+
+        uint16_t icycles = ((uint16_t) x[8] << 8) | x[9];
+        uint16_t remaining = ((uint16_t) x[10] << 8) | x[11];
+        id(sens_cycles).publish_state(icycles);
+        id(sens_temps_restant).publish_state(remaining);
+
+        // Bitmask 32 bits (x[2..5]) : bit k (0=LSB) au bit (k%8) de x[5-k/8]
+        auto zone_bit = [&](int k) -> bool {
+          int byte_idx = 5 - (k / 8);
+          int bit_pos = k % 8;
+          return (x[byte_idx] >> bit_pos) & 0x01;
+        };
+        int active_in_first16 = 0;
+        for (int k = 0; k < 16; k++) if (zone_bit(k)) active_in_first16++;
+        bool pump_active = active_in_first16 > 1; // la pompe remplace la zone 1
+        int zone_index = -1;
+        int search_start = pump_active ? 1 : 0;
+        for (int k = search_start; k < 32; k++) {
+          if (zone_bit(k)) { zone_index = k; break; }
+        }
+        id(sens_zone_active).publish_state(zone_index + 1);
+        id(binsens_pompe).publish_state(pump_active);
+        id(binsens_vanne).publish_state(zone_index >= 0 || pump_active);
+
+        bool open_fault = x[13] || x[14] || x[15] || x[16];
+        bool short_fault = x[17] || x[18] || x[19] || x[20];
+        id(binsens_defaut_ouvert).publish_state(open_fault);
+        id(binsens_defaut_courtcircuit).publish_state(short_fault);
+      }
+      return fsm_state;
+
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: rain_pure_vision
+    name: "Batterie Rain Vision"
+    service_uuid: '180F'
+    characteristic_uuid: '2A19'
+    unit_of_measurement: '%'
+    device_class: battery
+    state_class: measurement
+    icon: "mdi:battery"
+    update_interval: 10min
+    lambda: |-
+      if (x.size() > 0) return x[0];
+      return NAN;
+
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: rain_pure_vision
+    id: offperiods_raw_sensor
+    name: "OFFPERIODS taille"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+    characteristic_uuid: '0200E003-4201-37BB-EA11-42A458AA4846'
+    notify: true
+    update_interval: 30s
+    lambda: |-
+      if (x.size() >= 14) {
+        id(offperiods_raw).assign(x.begin(), x.end());
+        id(offperiods_valid) = true;
+        uint16_t days = ((uint16_t) x[3] << 8) | x[4];
+        id(binsens_pause_active).publish_state(days > 0);
+      }
+      return x.size();
+
+  - platform: template
+    name: "Zone en cours d'arrosage"
+    id: sens_zone_active
+    icon: "mdi:sprinkler-variant"
+
+  - platform: template
+    name: "Temps restant (zone en cours)"
+    id: sens_temps_restant
+    icon: "mdi:timer-sand"
+    unit_of_measurement: "s"
+    state_class: measurement
+
+  - platform: template
+    name: "Cycles d'arrosage"
+    id: sens_cycles
+    icon: "mdi:counter"
+    entity_category: diagnostic
+    state_class: total_increasing
+
+binary_sensor:
+  - platform: template
+    name: "État de la vanne"
+    id: binsens_vanne
+    icon: "mdi:water-pump"
+
+  - platform: template
+    name: "Capteur de pluie détecté"
+    id: binsens_pluie
+    device_class: moisture
+
+  - platform: template
+    name: "Pompe active"
+    id: binsens_pompe
+    icon: "mdi:pump"
+
+  - platform: template
+    name: "Défaut vanne (circuit ouvert)"
+    id: binsens_defaut_ouvert
+    device_class: problem
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Défaut vanne (court-circuit)"
+    id: binsens_defaut_courtcircuit
+    device_class: problem
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Pause active (confirmée par le boîtier)"
+    id: binsens_pause_active
+    icon: "mdi:pause-circle"
+
+  - platform: template
+    name: "Connexion BLE au boîtier"
+    id: ble_connecte
+    device_class: connectivity
+    entity_category: diagnostic
+
+button:
+  - platform: template
+    name: "Fermer la vanne"
+    on_press:
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x08]
+
+  # Commandes : 0x04 normal, 0x05 start manual, 0x06 stop, 0x08 close all
+  - platform: template
+    name: "Arrosage manuel"
+    on_press:
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x06]
+      - delay: 500ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200E005-4201-37BB-EA11-42A458AA4846' # MANUAL
+          value: !lambda |-
+            std::vector<uint8_t> frame(64, 0x00);
+            int zone = (int) id(zone_manuelle).state;
+            int minutes = (int) id(duree_arrosage).state;
+            int seconds_dur = minutes * 60; // le firmware attend des secondes
+            if (zone >= 1 && zone <= 32) {
+              int idx = (zone - 1) * 2;
+              frame[idx]     = (uint8_t) (seconds_dur / 256);
+              frame[idx + 1] = (uint8_t) (seconds_dur % 256);
+            }
+            return frame;
+      - delay: 1000ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x05]
+
+  - platform: template
+    name: "Pause"
+    on_press:
+      - script.execute: do_pause
+
+  - platform: template
+    name: "Annuler la pause"
+    on_press:
+      - script.execute: do_unpause
+
+  - platform: template
+    name: "Synchroniser l'heure du boîtier"
+    entity_category: config
+    on_press:
+      - script.execute: sync_device_time
