@@ -1,3 +1,5 @@
+🇬🇧 [English version](README.en.md)
+
 # 🌱 Proxy ESPHome pour boîtier d'irrigation Rain Pure Vision 2.0 (2 zones)
 
 Intégration [ESPHome](https://esphome.io/) / [Home Assistant](https://www.home-assistant.io/) non officielle pour le boîtier d'irrigation **Rain Pure Vision 2.0 (2 zones)**, piloté en Bluetooth Low Energy (BLE). Cette intégration n'existait pas jusqu'à présent — ce dépôt tente de combler ce manque.
