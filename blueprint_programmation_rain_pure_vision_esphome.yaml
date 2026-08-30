@@ -343,7 +343,7 @@ action:
                           variables:
                             companion_action: "{{ 'notify.mobile_app_' ~ (repeat.item.split('.', 1)[-1] | replace('mobile_app_', '', 1)) }}"
                         - alias: "Push Companion (action mobile_app)"
-                          action: "{{ companion_action }}"
+                          service: "{{ companion_action }}"
                           continue_on_error: true
                           data:
                             title: "{{ notif_title }}"
