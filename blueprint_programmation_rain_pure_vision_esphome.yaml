@@ -1,0 +1,688 @@
+# Arrosage programmé (Rain Pure Vision) V5.3.1
+# V5.2 (P0/P1) + notifications Companion iOS/Android :
+# - action notify.mobile_app_* (title, tag, Focus, critique, actions)
+# - Time-Sensitive au démarrage, Critical sur défaut / vanne non fermée
+# - bouton « Arrêter » (mobile_app_notification_action) pendant la durée
+# - tag par zone : la notif « en cours » est remplacée par terminé / arrêté / erreur
+# - multi-appareils, champs Android (priority, channel) en bonus
+
+blueprint:
+  name: Arrosage programmé (Rain Pure Vision) - V5.3.1 Notifications iOS
+  description: >
+    Déclenche l'arrosage planifié avec budget saisonnier, résilience Bluetooth,
+    sécurités matérielles et notifications Companion iOS/Android.
+
+    Notifications iOS : Time-Sensitive (perce le Focus), alertes critiques
+    (défaut / vanne), bouton Arrêter sur la notif de démarrage.
+
+    Choisir l'entité notify de l'iPhone (ex. notify.iphone_de_florent) : elle
+    est convertie automatiquement en action notify.mobile_app_iphone_de_florent.
+    Alertes critiques : Réglages iPhone → Notifications → Home Assistant
+    → activer « Alertes critiques ».
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    schedule_entity:
+      name: Planning (helper Schedule)
+      selector:
+        entity:
+          domain: schedule
+    zone_number_entity:
+      name: "Entité : Zone à arroser"
+      selector:
+        entity:
+          domain: number
+    duration_number_entity:
+      name: "Entité : Durée arrosage manuel"
+      selector:
+        entity:
+          domain: number
+    start_button_entity:
+      name: "Entité : bouton Arrosage manuel"
+      selector:
+        entity:
+          domain: button
+    stop_button_entity:
+      name: "Entité : bouton Fermer la vanne"
+      selector:
+        entity:
+          domain: button
+    ble_sensor_entity:
+      name: "Entité : Connexion BLE au boîtier"
+      selector:
+        entity:
+          domain: binary_sensor
+    rain_sensor_entity:
+      name: "Entité : Capteur de pluie détecté"
+      selector:
+        entity:
+          domain: binary_sensor
+    pause_sensor_entity:
+      name: "Entité : Pause active (Facultatif)"
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    fault_sensor_entity:
+      name: "Entité : Défaut matériel (Facultatif)"
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    weather_entity:
+      name: Entité météo (Facultatif)
+      default: ""
+      selector:
+        entity:
+          domain: weather
+          multiple: false
+    precipitation_threshold:
+      name: Seuil de précipitations (mm)
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: mm
+          mode: box
+    soil_moisture_entity:
+      name: Capteur d'humidité du sol (Facultatif)
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: moisture
+          multiple: false
+    soil_moisture_threshold:
+      name: Seuil d'humidité du sol (%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: '%'
+          mode: slider
+    zone_value:
+      name: Numéro de zone à arroser
+      selector:
+        number:
+          min: 1
+          max: 32
+          step: 1
+          mode: box
+    duration_value:
+      name: Durée d'arrosage de base (minutes)
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    budget_entity:
+      name: Coefficient saisonnier / Budget (Facultatif)
+      description: "Entité (input_number) en pourcentage. Vide = 100 %. 0 % = pas d'arrosage."
+      default: ""
+      selector:
+        entity:
+          domain: input_number
+    notifications:
+      name: Notifications iOS / Companion
+      icon: mdi:apple
+      description: >
+        Sélectionnez notify.mobile_app_iPhone (éventuellement plusieurs appareils).
+        Alertes critiques : les activer dans Réglages iOS pour l'app Home Assistant.
+      collapsed: false
+      input:
+        notify_entity:
+          name: Appareils à notifier
+          description: >
+            Entité notify de l'appareil (ex. notify.iphone_de_florent).
+            L'action Companion notify.mobile_app_* est dérivée automatiquement.
+            Vide = pas d'alerte.
+          default: []
+          selector:
+            entity:
+              domain: notify
+              multiple: true
+        notify_on_success:
+          name: Notifier lors du démarrage
+          description: "Si le bouton Arrêter est activé, une notif de démarrage est quand même envoyée."
+          default: true
+          selector:
+            boolean:
+        notify_on_skip:
+          name: Notifier les annulations (pluie, pause, sol, budget…)
+          default: true
+          selector:
+            boolean:
+        notify_on_complete:
+          name: Notifier la fin d'arrosage / fermeture de vanne
+          default: true
+          selector:
+            boolean:
+        ios_actions:
+          name: Bouton « Arrêter » sur la notification
+          description: "Ajoute un bouton rouge Arrêter (fonctionne depuis l'écran verrouillé)."
+          default: true
+          selector:
+            boolean:
+        ios_interruption_start:
+          name: Niveau iOS au démarrage
+          default: time-sensitive
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Normal
+                  value: active
+                - label: Time-Sensitive (perce le Focus)
+                  value: time-sensitive
+                - label: Critique (perce Focus + silence)
+                  value: critical
+        ios_critical_fault:
+          name: Alerte critique sur défaut matériel
+          default: true
+          selector:
+            boolean:
+        ios_critical_ble:
+          name: Alerte critique si BLE HS / vanne non fermée
+          default: true
+          selector:
+            boolean:
+        ios_url:
+          name: Page HA ouverte au tap
+          default: /lovelace
+          selector:
+            text:
+
+trigger:
+  - platform: state
+    entity_id: !input schedule_entity
+    from: "off"
+    to: "on"
+    id: "start"
+  - platform: state
+    entity_id: !input schedule_entity
+    from: "on"
+    to: "off"
+    id: "stop"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "start"
+        sequence:
+          - alias: "Initialiser les variables"
+            variables:
+              weather_entity_id: !input weather_entity
+              rain_threshold: !input precipitation_threshold
+              soil_entity_id: !input soil_moisture_entity
+              soil_threshold: !input soil_moisture_threshold
+              pause_entity_id: !input pause_sensor_entity
+              fault_entity_id: !input fault_sensor_entity
+              b_entity: !input budget_entity
+              notify_ent: !input notify_entity
+              notify_ents: "{{ (notify_ent if notify_ent is list else [notify_ent]) | reject('in', ['', 'none', none]) | list }}"
+              notify_succ: !input notify_on_success
+              notify_on_skip: !input notify_on_skip
+              notify_on_complete: !input notify_on_complete
+              ios_actions: !input ios_actions
+              ios_level_start: !input ios_interruption_start
+              ios_critical_fault: !input ios_critical_fault
+              ios_critical_ble: !input ios_critical_ble
+              ios_url: !input ios_url
+              z_val: !input zone_value
+              d_val_base: !input duration_value
+              rain_entity_id: !input rain_sensor_entity
+              ble_entity_id: !input ble_sensor_entity
+              schedule_entity_id: !input schedule_entity
+              duration_entity_id: !input duration_number_entity
+              stop_action_id: "{{ 'ARROSAGE_STOP_Z' ~ z_val }}"
+
+          - alias: "Récupérer les prévisions météo"
+            if:
+              - condition: template
+                value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - action: weather.get_forecasts
+                continue_on_error: true
+                target:
+                  entity_id: "{{ weather_entity_id }}"
+                data:
+                  type: daily
+                response_variable: forecast_result
+
+          - alias: "Évaluer les conditions d'annulation (avant BLE)"
+            variables:
+              d_val: >
+                {% set base = d_val_base | float(1) %}
+                {% set budget = 100.0 %}
+                {% if b_entity | default('') not in ['', 'none', none] and states(b_entity) | is_number %}
+                  {% set budget = states(b_entity) | float(100) %}
+                {% endif %}
+                {% if budget <= 0 %}
+                  0
+                {% else %}
+                  {% set raw = (base * budget / 100) | round(0, 'half-up') | int %}
+                  {% set minutes = [raw, 1] | max %}
+                  {% set cap = state_attr(duration_entity_id, 'max') %}
+                  {% set cap = cap | float(60) if cap is not none else 60 %}
+                  {{ [minutes, cap | int] | min }}
+                {% endif %}
+              msg_prefix: "Zone {{ z_val }} ({{ d_val }} min) :"
+              skip_blob: >
+                {% set ns = namespace(title='', message='', kind='') %}
+                {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
+                  {% set ns.title = '🚨 Défaut matériel' %}
+                  {% set ns.message = msg_prefix ~ ' Un défaut électrique est détecté sur la vanne !' %}
+                  {% set ns.kind = 'fault' %}
+                {% elif pause_entity_id | default('') not in ['', 'none', none] and is_state(pause_entity_id, 'on') %}
+                  {% set ns.title = '⏸️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Le boîtier est en mode Pause.' %}
+                  {% set ns.kind = 'pause' %}
+                {% elif is_state(rain_entity_id, 'on') %}
+                  {% set ns.title = '🌧️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Le capteur de pluie est actif.' %}
+                  {% set ns.kind = 'rain' %}
+                {% elif weather_entity_id | default('') not in ['', 'none', none]
+                    and forecast_result is defined
+                    and forecast_result is mapping
+                    and weather_entity_id in forecast_result %}
+                  {% set fc = forecast_result[weather_entity_id].forecast | default([]) %}
+                  {% if fc | length > 0 %}
+                    {% set precip = fc[0]['precipitation'] | default(0) | float(0) %}
+                    {% if precip >= rain_threshold | float(0) %}
+                      {% set ns.title = '🌦️ Arrosage annulé' %}
+                      {% set ns.message = msg_prefix ~ ' ' ~ precip ~ ' mm de pluie prévus (seuil: ' ~ rain_threshold ~ ' mm).' %}
+                      {% set ns.kind = 'weather' %}
+                    {% endif %}
+                  {% endif %}
+                {% elif soil_entity_id | default('') not in ['', 'none', none]
+                    and states(soil_entity_id) | is_number
+                    and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
+                  {% set ns.title = '🌱 Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Sol suffisamment humide (' ~ states(soil_entity_id) ~ '%).' %}
+                  {% set ns.kind = 'soil' %}
+                {% elif d_val | int(0) <= 0 %}
+                  {% set ns.title = '💧 Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Budget saisonnier à 0 %, arrosage ignoré.' %}
+                  {% set ns.kind = 'budget' %}
+                {% endif %}
+                {{ ns.title }}|||{{ ns.message }}|||{{ ns.kind }}
+              skip_title: "{{ skip_blob.split('|||')[0] }}"
+              skip_message: "{{ skip_blob.split('|||')[1] if skip_blob.split('|||') | length > 1 else '' }}"
+              skip_kind: "{{ skip_blob.split('|||')[2] if skip_blob.split('|||') | length > 2 else '' }}"
+
+          - alias: "Annuler si exclusion (avant BLE)"
+            if:
+              - condition: template
+                value_template: "{{ skip_title | default('') | trim != '' }}"
+            then:
+              - alias: "Notifier l'annulation"
+                if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "{{ skip_title }}"
+                      notif_message: "{{ skip_message }}"
+                      notif_level: "{{ 'critical' if skip_kind == 'fault' and ios_critical_fault else 'active' }}"
+                      notif_actions: false
+                      notif_kind: "{{ skip_kind }}"
+                  - &notify_ios
+                    alias: "Notification Companion iOS/Android"
+                    repeat:
+                      for_each: "{{ notify_ents }}"
+                      sequence:
+                        - alias: "Résoudre notify.mobile_app_* depuis l'entité"
+                          variables:
+                            companion_action: "{{ 'notify.mobile_app_' ~ (repeat.item.split('.', 1)[-1] | replace('mobile_app_', '', 1)) }}"
+                        - alias: "Push Companion (action mobile_app)"
+                          action: "{{ companion_action }}"
+                          continue_on_error: true
+                          data:
+                            title: "{{ notif_title }}"
+                            message: "{{ notif_message }}"
+                            data:
+                              tag: "arrosage-z{{ z_val }}"
+                              group: arrosage-rpv
+                              url: "{{ ios_url }}"
+                              clickAction: "{{ ios_url }}"
+                              ttl: 0
+                              priority: high
+                              channel: Arrosage
+                              importance: "{{ 'max' if notif_level == 'critical' else 'high' }}"
+                              notification_icon: mdi:sprinkler-variant
+                              sticky: "{{ notif_level == 'critical' }}"
+                              action_data:
+                                zone: "{{ z_val }}"
+                                kind: "{{ notif_kind | default('') }}"
+                              push:
+                                interruption-level: "{{ notif_level }}"
+                                sound:
+                                  name: default
+                                  critical: "{{ 1 if notif_level == 'critical' else 0 }}"
+                                  volume: "{{ 1.0 if notif_level == 'critical' else 0.5 }}"
+                              actions: "{{ [{'action': stop_action_id, 'title': 'Arrêter', 'destructive': true, 'icon': 'sfsymbols:stop.circle.fill'}] if notif_actions else [] }}"
+              - stop: "{{ skip_message }}"
+
+          - alias: "Attendre le BLE si nécessaire"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - alias: "Attente reconnexion BLE (max 10 min) ou fin de créneau"
+                wait_for_trigger:
+                  - platform: state
+                    entity_id: !input ble_sensor_entity
+                    to: "on"
+                    id: ble_on
+                  - platform: state
+                    entity_id: !input schedule_entity
+                    from: "on"
+                    to: "off"
+                    id: schedule_off
+                timeout:
+                  minutes: 10
+                continue_on_timeout: true
+
+          - alias: "Abort si le créneau est terminé pendant l'attente"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(schedule_entity_id, 'on') }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "⏰ Arrosage annulé"
+                      notif_message: "{{ msg_prefix }} Le créneau du planning s'est terminé pendant l'attente Bluetooth."
+                      notif_level: active
+                      notif_actions: false
+                      notif_kind: schedule
+                  - *notify_ios
+              - stop: "Créneau terminé pendant l'attente BLE."
+
+          - alias: "Abort si le BLE n'est toujours pas joignable"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "📡 Arrosage impossible"
+                      notif_message: "{{ msg_prefix }} Boîtier injoignable en Bluetooth après 10 minutes d'attente."
+                      notif_level: "{{ 'critical' if ios_critical_ble else 'time-sensitive' }}"
+                      notif_actions: false
+                      notif_kind: ble
+                  - *notify_ios
+              - stop: "Arrêt de l'automatisation : BLE injoignable."
+
+          - alias: "Re-récupérer les prévisions météo (après attente)"
+            if:
+              - condition: template
+                value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - action: weather.get_forecasts
+                continue_on_error: true
+                target:
+                  entity_id: "{{ weather_entity_id }}"
+                data:
+                  type: daily
+                response_variable: forecast_result
+
+          - alias: "Évaluer les conditions d'annulation (après BLE)"
+            variables:
+              d_val: >
+                {% set base = d_val_base | float(1) %}
+                {% set budget = 100.0 %}
+                {% if b_entity | default('') not in ['', 'none', none] and states(b_entity) | is_number %}
+                  {% set budget = states(b_entity) | float(100) %}
+                {% endif %}
+                {% if budget <= 0 %}
+                  0
+                {% else %}
+                  {% set raw = (base * budget / 100) | round(0, 'half-up') | int %}
+                  {% set minutes = [raw, 1] | max %}
+                  {% set cap = state_attr(duration_entity_id, 'max') %}
+                  {% set cap = cap | float(60) if cap is not none else 60 %}
+                  {{ [minutes, cap | int] | min }}
+                {% endif %}
+              msg_prefix: "Zone {{ z_val }} ({{ d_val }} min) :"
+              skip_blob: >
+                {% set ns = namespace(title='', message='', kind='') %}
+                {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
+                  {% set ns.title = '🚨 Défaut matériel' %}
+                  {% set ns.message = msg_prefix ~ ' Un défaut électrique est détecté sur la vanne !' %}
+                  {% set ns.kind = 'fault' %}
+                {% elif pause_entity_id | default('') not in ['', 'none', none] and is_state(pause_entity_id, 'on') %}
+                  {% set ns.title = '⏸️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Le boîtier est en mode Pause.' %}
+                  {% set ns.kind = 'pause' %}
+                {% elif is_state(rain_entity_id, 'on') %}
+                  {% set ns.title = '🌧️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Le capteur de pluie est actif.' %}
+                  {% set ns.kind = 'rain' %}
+                {% elif weather_entity_id | default('') not in ['', 'none', none]
+                    and forecast_result is defined
+                    and forecast_result is mapping
+                    and weather_entity_id in forecast_result %}
+                  {% set fc = forecast_result[weather_entity_id].forecast | default([]) %}
+                  {% if fc | length > 0 %}
+                    {% set precip = fc[0]['precipitation'] | default(0) | float(0) %}
+                    {% if precip >= rain_threshold | float(0) %}
+                      {% set ns.title = '🌦️ Arrosage annulé' %}
+                      {% set ns.message = msg_prefix ~ ' ' ~ precip ~ ' mm de pluie prévus (seuil: ' ~ rain_threshold ~ ' mm).' %}
+                      {% set ns.kind = 'weather' %}
+                    {% endif %}
+                  {% endif %}
+                {% elif soil_entity_id | default('') not in ['', 'none', none]
+                    and states(soil_entity_id) | is_number
+                    and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
+                  {% set ns.title = '🌱 Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Sol suffisamment humide (' ~ states(soil_entity_id) ~ '%).' %}
+                  {% set ns.kind = 'soil' %}
+                {% elif d_val | int(0) <= 0 %}
+                  {% set ns.title = '💧 Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' Budget saisonnier à 0 %, arrosage ignoré.' %}
+                  {% set ns.kind = 'budget' %}
+                {% endif %}
+                {{ ns.title }}|||{{ ns.message }}|||{{ ns.kind }}
+              skip_title: "{{ skip_blob.split('|||')[0] }}"
+              skip_message: "{{ skip_blob.split('|||')[1] if skip_blob.split('|||') | length > 1 else '' }}"
+              skip_kind: "{{ skip_blob.split('|||')[2] if skip_blob.split('|||') | length > 2 else '' }}"
+
+          - alias: "Annuler si exclusion (après BLE)"
+            if:
+              - condition: template
+                value_template: "{{ skip_title | default('') | trim != '' }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "{{ skip_title }}"
+                      notif_message: "{{ skip_message }}"
+                      notif_level: "{{ 'critical' if skip_kind == 'fault' and ios_critical_fault else 'active' }}"
+                      notif_actions: false
+                      notif_kind: "{{ skip_kind }}"
+                  - *notify_ios
+              - stop: "{{ skip_message }}"
+
+          - alias: "Régler la zone"
+            action: number.set_value
+            target:
+              entity_id: !input zone_number_entity
+            data:
+              value: !input zone_value
+
+          - alias: "Régler la durée (budget + plancher/plafond)"
+            action: number.set_value
+            target:
+              entity_id: !input duration_number_entity
+            data:
+              value: "{{ d_val }}"
+
+          - alias: "Laisser le boîtier prendre en compte zone et durée"
+            delay:
+              seconds: 2
+
+          - alias: "Démarrer l'arrosage"
+            action: button.press
+            target:
+              entity_id: !input start_button_entity
+
+          - alias: "Notifier le démarrage (Time-Sensitive + bouton Arrêter)"
+            if:
+              - condition: template
+                value_template: "{{ notify_ents | length > 0 and (notify_succ or ios_actions) }}"
+            then:
+              - variables:
+                  notif_title: "💧 Arrosage en cours"
+                  notif_message: "Démarrage réussi pour la Zone {{ z_val }} ({{ d_val }} minutes)."
+                  notif_level: "{{ ios_level_start }}"
+                  notif_actions: "{{ ios_actions }}"
+                  notif_kind: start
+              - *notify_ios
+
+          - alias: "Écouter le bouton Arrêter iOS / fin de durée"
+            if:
+              - condition: template
+                value_template: "{{ notify_ents | length > 0 and (ios_actions or notify_on_complete) }}"
+            then:
+              - alias: "Attente action iOS ou fin de durée"
+                wait_for_trigger:
+                  - platform: event
+                    event_type: mobile_app_notification_action
+                    event_data:
+                      action: "{{ stop_action_id }}"
+                    id: ios_stop
+                timeout:
+                  minutes: "{{ d_val | int(1) }}"
+                continue_on_timeout: true
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ wait.completed }}"
+                    sequence:
+                      - alias: "Arrêt demandé depuis le téléphone"
+                        if:
+                          - condition: template
+                            value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+                        then:
+                          - wait_for_trigger:
+                              - platform: state
+                                entity_id: !input ble_sensor_entity
+                                to: "on"
+                            timeout:
+                              minutes: 2
+                            continue_on_timeout: true
+                      - if:
+                          - condition: template
+                            value_template: "{{ is_state(ble_entity_id, 'on') }}"
+                        then:
+                          - action: button.press
+                            target:
+                              entity_id: !input stop_button_entity
+                          - variables:
+                              notif_title: "⏹️ Arrosage arrêté"
+                              notif_message: "Zone {{ z_val }} : arrêté depuis le téléphone."
+                              notif_level: time-sensitive
+                              notif_actions: false
+                              notif_kind: ios_stop
+                          - *notify_ios
+                        else:
+                          - variables:
+                              notif_title: "📡 Fermeture impossible"
+                              notif_message: "Zone {{ z_val }} : arrêt demandé depuis le téléphone, mais le boîtier est injoignable."
+                              notif_level: "{{ 'critical' if ios_critical_ble else 'time-sensitive' }}"
+                              notif_actions: false
+                              notif_kind: ble
+                          - *notify_ios
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ notify_on_complete }}"
+                    sequence:
+                      - variables:
+                          notif_title: "✅ Arrosage terminé"
+                          notif_message: "Zone {{ z_val }} : cycle de {{ d_val }} min terminé."
+                          notif_level: active
+                          notif_actions: false
+                          notif_kind: complete
+                      - *notify_ios
+
+      - conditions:
+          - condition: trigger
+            id: "stop"
+        sequence:
+          - alias: "Variables d'arrêt"
+            variables:
+              notify_ent: !input notify_entity
+              notify_ents: "{{ (notify_ent if notify_ent is list else [notify_ent]) | reject('in', ['', 'none', none]) | list }}"
+              notify_on_complete: !input notify_on_complete
+              ios_critical_ble: !input ios_critical_ble
+              ios_url: !input ios_url
+              ios_actions: false
+              z_val: !input zone_value
+              ble_entity_id: !input ble_sensor_entity
+              stop_action_id: "{{ 'ARROSAGE_STOP_Z' ~ z_val }}"
+
+          - alias: "Attendre le BLE pour fermer la vanne (max 2 min)"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - wait_for_trigger:
+                  - platform: state
+                    entity_id: !input ble_sensor_entity
+                    to: "on"
+                    id: ble_on
+                timeout:
+                  minutes: 2
+                continue_on_timeout: true
+
+          - alias: "Fermer la vanne si BLE joignable"
+            if:
+              - condition: template
+                value_template: "{{ is_state(ble_entity_id, 'on') }}"
+            then:
+              - action: button.press
+                target:
+                  entity_id: !input stop_button_entity
+              - alias: "Notifier la fermeture"
+                if:
+                  - condition: template
+                    value_template: "{{ notify_on_complete and notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "🔒 Vanne fermée"
+                      notif_message: "Zone {{ z_val }} : fin de créneau, vanne fermée."
+                      notif_level: active
+                      notif_actions: false
+                      notif_kind: closed
+                  - *notify_ios
+            else:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_ents | length > 0 }}"
+                then:
+                  - variables:
+                      notif_title: "📡 Fermeture impossible"
+                      notif_message: "Zone {{ z_val }} : boîtier injoignable en Bluetooth, la vanne n'a pas pu être fermée."
+                      notif_level: "{{ 'critical' if ios_critical_ble else 'time-sensitive' }}"
+                      notif_actions: false
+                      notif_kind: ble
+                  - *notify_ios
+              - stop: "Fermeture impossible : BLE injoignable."
+
+mode: restart
