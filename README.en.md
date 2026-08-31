@@ -40,7 +40,6 @@ Concretely, this means:
 | **Valve state** (open/closed) | Derived from the real state of active zones |
 | **Currently watering zone** | Number of the active zone during a cycle |
 | **Time remaining** | Time remaining on the current cycle (in seconds) |
-| **Watering cycles** (counter) | Number of cycles run since the controller's last reset |
 | **Rain sensor** | State of the controller's rain sensor, if fitted |
 | **Pump active** | Detects pump activation (if applicable) |
 | **Valve faults** | Detects open-circuit / short-circuit faults on the solenoid valves |
