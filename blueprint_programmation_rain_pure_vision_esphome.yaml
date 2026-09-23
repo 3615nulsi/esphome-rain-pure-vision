@@ -2,12 +2,16 @@
 # Base V5.1 + P0/P1 (restart, from, re-check BLE, durée, stop BLE)
 # V5.5 : entrée facultative « État de la vanne » → ouverture confirmée
 # (sinon alerte) et fin d'arrosage réelle (sinon fermeture forcée).
+# V5.6 : pluie prévue sur les N prochaines heures (prévisions horaires,
+# repli sur le journalier) ; pluie tombée récemment (capteur de cumul) ;
+# correction : avec une entité météo, humidité du sol et budget à 0 %
+# n'étaient plus jamais vérifiés.
 # Notifications : UNIQUEMENT notify.send_message + entité notify.*
 # (pas d'action notify.iphone_* / notify.mobile_app_* — HA 2026 les refuse)
 # Pas de sections, pas d'ancres YAML — formulaire blueprint compatible.
 
 blueprint:
-  name: Arrosage programmé (Rain Pure Vision) - V5.5
+  name: Arrosage programmé (Rain Pure Vision) - V5.6
   description: >
     Arrosage planifié avec budget saisonnier, résilience Bluetooth,
     sécurités matérielles et notifications iPhone via notify.send_message.
@@ -84,12 +88,51 @@ blueprint:
           domain: weather
           multiple: false
     precipitation_threshold:
-      name: Seuil de précipitations (mm)
+      name: Seuil de pluie prévue (mm)
+      description: Arrosage annulé si la pluie prévue atteint ce seuil (0 = ignoré).
       default: 3
       selector:
         number:
           min: 0
           max: 50
+          step: 0.5
+          unit_of_measurement: mm
+          mode: box
+    forecast_hours:
+      name: Horizon des prévisions (heures)
+      description: >
+        Cumul de pluie prévue sur les N prochaines heures (prévisions
+        horaires). Si l'entité météo n'a pas de prévisions horaires : pluie
+        prévue pour la journée.
+      default: 12
+      selector:
+        number:
+          min: 1
+          max: 48
+          step: 1
+          unit_of_measurement: h
+          mode: box
+    rain_accumulation_entity:
+      name: Pluie tombée récemment (Facultatif)
+      description: >
+        Capteur donnant le cumul de pluie sur une période glissante (ex.
+        48 h). Avec un pluviomètre dont le cumul journalier repart à zéro à
+        minuit, créer une entrée « Statistiques » sur ce cumul :
+        caractéristique « Somme des différences (non négatives) », âge
+        maximal 48 h, taille d'échantillon élevée (ex. 1000).
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          multiple: false
+    rain_accumulation_threshold:
+      name: Seuil de pluie tombée (mm)
+      description: Arrosage annulé si la pluie tombée atteint ce seuil (0 = ignoré).
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 100
           step: 0.5
           unit_of_measurement: mm
           mode: box
@@ -196,19 +239,71 @@ action:
               schedule_entity_id: !input schedule_entity
               duration_entity_id: !input duration_number_entity
               valve_entity_id: !input valve_sensor_entity
+              forecast_hours_val: !input forecast_hours
+              rain_acc_entity_id: !input rain_accumulation_entity
+              rain_acc_threshold: !input rain_accumulation_threshold
+              pluie_prevue_mm: -1
+              pluie_prevue_libelle: ""
 
           - alias: "Récupérer les prévisions météo"
             if:
               - condition: template
                 value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
             then:
-              - action: weather.get_forecasts
-                continue_on_error: true
-                target:
-                  entity_id: "{{ weather_entity_id }}"
-                data:
-                  type: daily
-                response_variable: forecast_result
+              - variables:
+                  pluie_prevue_mm: -1
+                  meteo_features: "{{ state_attr(weather_entity_id, 'supported_features') | int(0) }}"
+              # Prévisions horaires si l'entité les fournit (bit 2) : cumul
+              # sur les N prochaines heures (heure en cours comprise).
+              - if:
+                  - condition: template
+                    value_template: "{{ meteo_features | bitwise_and(2) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: hourly
+                    response_variable: rep_horaire
+                  # Recopie dans les variables du niveau principal (une
+                  # variable de réponse peut rester locale à ce bloc).
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_horaire[weather_entity_id].forecast | default([])
+                           if rep_horaire is defined and rep_horaire is mapping and weather_entity_id in rep_horaire
+                           else [] %}
+                        {% set debut = now() - timedelta(hours=1) %}
+                        {% set fin = now() + timedelta(hours=forecast_hours_val | int(12)) %}
+                        {% set ns = namespace(total=0, n=0) %}
+                        {% for f in fc %}
+                          {% set t = as_datetime(f.datetime) %}
+                          {% if t is not none and debut <= t < fin %}
+                            {% set ns.total = ns.total + (f.precipitation | default(0) | float(0)) %}
+                            {% set ns.n = ns.n + 1 %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ (ns.total | round(1)) if ns.n > 0 else -1 }}
+                      pluie_prevue_libelle: "dans les {{ forecast_hours_val | int(12) }} prochaines heures"
+              # Sinon (ou en cas d'échec) : prévision journalière du jour.
+              - if:
+                  - condition: template
+                    value_template: "{{ pluie_prevue_mm | float(-1) < 0 and meteo_features | bitwise_and(1) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: daily
+                    response_variable: rep_jour
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_jour[weather_entity_id].forecast | default([])
+                           if rep_jour is defined and rep_jour is mapping and weather_entity_id in rep_jour
+                           else [] %}
+                        {{ (fc[0].precipitation | default(0) | float(0)) if fc | count > 0 else -1 }}
+                      pluie_prevue_libelle: "aujourd'hui"
 
           - alias: "Évaluer les conditions d'annulation (avant BLE)"
             variables:
@@ -230,6 +325,9 @@ action:
               msg_prefix: "Zone {{ z_val }} ({{ d_val }} min) :"
               skip_blob: >
                 {% set ns = namespace(title='', message='') %}
+                {% set pluie_tombee = states(rain_acc_entity_id) | float(-1)
+                   if rain_acc_entity_id | default('') not in ['', 'none', none] else -1 %}
+                {% set pluie_prevue = pluie_prevue_mm | float(-1) %}
                 {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
                   {% set ns.title = '🚨 Défaut matériel' %}
                   {% set ns.message = msg_prefix ~ ' Un défaut électrique est détecté sur la vanne !' %}
@@ -239,18 +337,12 @@ action:
                 {% elif is_state(rain_entity_id, 'on') %}
                   {% set ns.title = '🌧️ Arrosage annulé' %}
                   {% set ns.message = msg_prefix ~ ' Le capteur de pluie est actif.' %}
-                {% elif weather_entity_id | default('') not in ['', 'none', none]
-                    and forecast_result is defined
-                    and forecast_result is mapping
-                    and weather_entity_id in forecast_result %}
-                  {% set fc = forecast_result[weather_entity_id].forecast | default([]) %}
-                  {% if fc | length > 0 %}
-                    {% set precip = fc[0]['precipitation'] | default(0) | float(0) %}
-                    {% if precip >= rain_threshold | float(0) %}
-                      {% set ns.title = '🌦️ Arrosage annulé' %}
-                      {% set ns.message = msg_prefix ~ ' ' ~ precip ~ ' mm de pluie prévus (seuil: ' ~ rain_threshold ~ ' mm).' %}
-                    {% endif %}
-                  {% endif %}
+                {% elif rain_acc_threshold | float(0) > 0 and pluie_tombee >= rain_acc_threshold | float(0) %}
+                  {% set ns.title = '🌧️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_tombee ~ ' mm de pluie tombés récemment (seuil : ' ~ rain_acc_threshold ~ ' mm).' %}
+                {% elif rain_threshold | float(0) > 0 and pluie_prevue >= rain_threshold | float(0) %}
+                  {% set ns.title = '🌦️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_prevue ~ ' mm de pluie prévus ' ~ pluie_prevue_libelle ~ ' (seuil : ' ~ rain_threshold ~ ' mm).' %}
                 {% elif soil_entity_id | default('') not in ['', 'none', none]
                     and states(soil_entity_id) | is_number
                     and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
@@ -343,13 +435,60 @@ action:
               - condition: template
                 value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
             then:
-              - action: weather.get_forecasts
-                continue_on_error: true
-                target:
-                  entity_id: "{{ weather_entity_id }}"
-                data:
-                  type: daily
-                response_variable: forecast_result
+              - variables:
+                  pluie_prevue_mm: -1
+                  meteo_features: "{{ state_attr(weather_entity_id, 'supported_features') | int(0) }}"
+              # Prévisions horaires si l'entité les fournit (bit 2) : cumul
+              # sur les N prochaines heures (heure en cours comprise).
+              - if:
+                  - condition: template
+                    value_template: "{{ meteo_features | bitwise_and(2) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: hourly
+                    response_variable: rep_horaire
+                  # Recopie dans les variables du niveau principal (une
+                  # variable de réponse peut rester locale à ce bloc).
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_horaire[weather_entity_id].forecast | default([])
+                           if rep_horaire is defined and rep_horaire is mapping and weather_entity_id in rep_horaire
+                           else [] %}
+                        {% set debut = now() - timedelta(hours=1) %}
+                        {% set fin = now() + timedelta(hours=forecast_hours_val | int(12)) %}
+                        {% set ns = namespace(total=0, n=0) %}
+                        {% for f in fc %}
+                          {% set t = as_datetime(f.datetime) %}
+                          {% if t is not none and debut <= t < fin %}
+                            {% set ns.total = ns.total + (f.precipitation | default(0) | float(0)) %}
+                            {% set ns.n = ns.n + 1 %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ (ns.total | round(1)) if ns.n > 0 else -1 }}
+                      pluie_prevue_libelle: "dans les {{ forecast_hours_val | int(12) }} prochaines heures"
+              # Sinon (ou en cas d'échec) : prévision journalière du jour.
+              - if:
+                  - condition: template
+                    value_template: "{{ pluie_prevue_mm | float(-1) < 0 and meteo_features | bitwise_and(1) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: daily
+                    response_variable: rep_jour
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_jour[weather_entity_id].forecast | default([])
+                           if rep_jour is defined and rep_jour is mapping and weather_entity_id in rep_jour
+                           else [] %}
+                        {{ (fc[0].precipitation | default(0) | float(0)) if fc | count > 0 else -1 }}
+                      pluie_prevue_libelle: "aujourd'hui"
 
           - alias: "Évaluer les conditions d'annulation (après BLE)"
             variables:
@@ -371,6 +510,9 @@ action:
               msg_prefix: "Zone {{ z_val }} ({{ d_val }} min) :"
               skip_blob: >
                 {% set ns = namespace(title='', message='') %}
+                {% set pluie_tombee = states(rain_acc_entity_id) | float(-1)
+                   if rain_acc_entity_id | default('') not in ['', 'none', none] else -1 %}
+                {% set pluie_prevue = pluie_prevue_mm | float(-1) %}
                 {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
                   {% set ns.title = '🚨 Défaut matériel' %}
                   {% set ns.message = msg_prefix ~ ' Un défaut électrique est détecté sur la vanne !' %}
@@ -380,18 +522,12 @@ action:
                 {% elif is_state(rain_entity_id, 'on') %}
                   {% set ns.title = '🌧️ Arrosage annulé' %}
                   {% set ns.message = msg_prefix ~ ' Le capteur de pluie est actif.' %}
-                {% elif weather_entity_id | default('') not in ['', 'none', none]
-                    and forecast_result is defined
-                    and forecast_result is mapping
-                    and weather_entity_id in forecast_result %}
-                  {% set fc = forecast_result[weather_entity_id].forecast | default([]) %}
-                  {% if fc | length > 0 %}
-                    {% set precip = fc[0]['precipitation'] | default(0) | float(0) %}
-                    {% if precip >= rain_threshold | float(0) %}
-                      {% set ns.title = '🌦️ Arrosage annulé' %}
-                      {% set ns.message = msg_prefix ~ ' ' ~ precip ~ ' mm de pluie prévus (seuil: ' ~ rain_threshold ~ ' mm).' %}
-                    {% endif %}
-                  {% endif %}
+                {% elif rain_acc_threshold | float(0) > 0 and pluie_tombee >= rain_acc_threshold | float(0) %}
+                  {% set ns.title = '🌧️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_tombee ~ ' mm de pluie tombés récemment (seuil : ' ~ rain_acc_threshold ~ ' mm).' %}
+                {% elif rain_threshold | float(0) > 0 and pluie_prevue >= rain_threshold | float(0) %}
+                  {% set ns.title = '🌦️ Arrosage annulé' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_prevue ~ ' mm de pluie prévus ' ~ pluie_prevue_libelle ~ ' (seuil : ' ~ rain_threshold ~ ' mm).' %}
                 {% elif soil_entity_id | default('') not in ['', 'none', none]
                     and states(soil_entity_id) | is_number
                     and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
