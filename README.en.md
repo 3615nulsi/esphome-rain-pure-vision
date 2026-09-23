@@ -124,17 +124,15 @@ The package is downloaded again at compile time, at most once a day (`refresh: 1
 The protocol was reconstructed from the official app's JavaScript code (Ionic/Capacitor app), then checked on the hardware. A few notable points:
 
 - The official app closes its BLE sessions after **~60 seconds**; the proxy reconnects automatically if the controller drops the connection.
-- The current zone's remaining time (`CURR_ZONE_LASTING_TIME`) is in **seconds**, despite its name — checked with a stopwatch.
 - The clock is written to the controller (`TIME` characteristic) on every connection, so that dated pauses work.
-- The manual watering frame (`MANUAL`) is 64 bytes long (2 per zone, up to 32 zones), even for a 2-zone controller.
+
 
 ---
 
 ## 🐞 Limitations
 
 - **Tested on a single 2-zone Rain Pure Vision controller.** Behavior on other variants (more zones, other generation) is not guaranteed.
-- The `TIME` characteristic UUID (`0200F004`) is inferred by analogy with the other characteristics of the service; it works, but couldn't be confirmed in the source code.
-- The `STATUS_FLAG` indicators (errors, default password…) are decoded from the official app and were only checked on a 2-zone controller. The "history full" flags for zones 3 to 5 are not exposed.
+- The `STATUS_FLAG` indicators (errors, default password…) are decoded from the official app and were only checked on a 2-zone controller. 
 
 ---
 
