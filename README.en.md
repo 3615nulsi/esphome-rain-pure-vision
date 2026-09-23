@@ -49,7 +49,7 @@ The controller accepts **only one BLE connection at a time**: while the ESP32 is
 
 ## 🗓️ Scheduling blueprint
 
-`blueprint_programmation_rain_pure_vision_esphome.yaml` is a Home Assistant automation blueprint (HA ≥ 2024.10). Import it via **Settings → Automations & scenes → Blueprints → Import blueprint**, using the file's GitHub URL.
+`blueprint_rain_pure_vision_esphome_en.yaml` is a Home Assistant automation blueprint (HA ≥ 2024.10), with English texts and notifications. The original French version, with identical logic, is `blueprint_programmation_rain_pure_vision_esphome.yaml`. Import it via **Settings → Automations & scenes → Blueprints → Import blueprint**, using the file's GitHub URL.
 
 - Waters one zone during the time slots of a schedule (Home Assistant *Schedule* helper), closes the valve at the end of the slot.
 - Duration adjusted by a seasonal coefficient (`input_number` in %).
@@ -121,7 +121,7 @@ Entities are named in French by default. For English names, add `langues/en.yaml
     files: [rain_pure_vision.yaml, langues/en.yaml]
 ```
 
-⚠️ Pick the language **at install time**: Home Assistant identifies entities by their name, so switching language later creates new entities (the old ones become unavailable and automations using them must be redone). A single name can also be overridden in the device's `substitutions:` (`rain_nom_…` keys, see the top of `rain_pure_vision.yaml`). The blueprint works whatever the entity language, but its texts and notifications remain in French.
+⚠️ Pick the language **at install time**: Home Assistant identifies entities by their name, so switching language later creates new entities (the old ones become unavailable and automations using them must be redone). A single name can also be overridden in the device's `substitutions:` (`rain_nom_…` keys, see the top of `rain_pure_vision.yaml`). The blueprint works whatever the entity language; it comes in English and French (see above).
 
 ### Updates
 

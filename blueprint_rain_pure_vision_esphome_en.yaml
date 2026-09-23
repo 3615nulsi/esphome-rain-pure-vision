@@ -1,0 +1,756 @@
+# Scheduled watering (Rain Pure Vision) V5.6 — English version
+# English translation of blueprint_programmation_rain_pure_vision_esphome.yaml
+# (same logic, only texts differ; internal variable names are kept in
+# French so both files stay easy to compare).
+# V5.5: optional "Valve state" input → opening confirmed (alert otherwise)
+# and actual end of watering (forced closing otherwise).
+# V5.6: forecast rain over the next N hours (hourly forecasts, falls back
+# to daily); recent rainfall (accumulation sensor).
+# Notifications: ONLY notify.send_message + a notify.* entity
+# (no notify.iphone_* / notify.mobile_app_* action — HA 2026 rejects them)
+# No sections, no YAML anchors — compatible blueprint form.
+
+blueprint:
+  name: Scheduled watering (Rain Pure Vision) - V5.6
+  description: >
+    Scheduled watering with seasonal budget, Bluetooth resilience,
+    hardware safety checks and phone notifications via notify.send_message.
+
+    Import via Settings → Automations & scenes → Blueprints (not via
+    Devices / Integrations).
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    schedule_entity:
+      name: Schedule (Schedule helper)
+      selector:
+        entity:
+          domain: schedule
+    zone_number_entity:
+      name: "Entity: Zone to water"
+      selector:
+        entity:
+          domain: number
+    duration_number_entity:
+      name: "Entity: Manual watering duration"
+      selector:
+        entity:
+          domain: number
+    start_button_entity:
+      name: "Entity: Manual watering button"
+      selector:
+        entity:
+          domain: button
+    stop_button_entity:
+      name: "Entity: Close valve button"
+      selector:
+        entity:
+          domain: button
+    valve_sensor_entity:
+      name: "Entity: Valve state (optional, recommended)"
+      description: >
+        Checks that the valve actually opened (alert otherwise) and
+        notifies the actual end of watering (forced closing if the valve
+        stays open). Empty = notifications without any check.
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    ble_sensor_entity:
+      name: "Entity: BLE connection to controller"
+      selector:
+        entity:
+          domain: binary_sensor
+    rain_sensor_entity:
+      name: "Entity: Rain sensor active"
+      selector:
+        entity:
+          domain: binary_sensor
+    pause_sensor_entity:
+      name: "Entity: Pause active (optional)"
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    fault_sensor_entity:
+      name: "Entity: Hardware fault (optional)"
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+    weather_entity:
+      name: Weather entity (optional)
+      default: ""
+      selector:
+        entity:
+          domain: weather
+          multiple: false
+    precipitation_threshold:
+      name: Forecast rain threshold (mm)
+      description: Watering skipped if forecast rain reaches this threshold (0 = ignored).
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.5
+          unit_of_measurement: mm
+          mode: box
+    forecast_hours:
+      name: Forecast horizon (hours)
+      description: >
+        Total rain forecast over the next N hours (hourly forecasts). If
+        the weather entity has no hourly forecasts: rain forecast for the
+        day.
+      default: 12
+      selector:
+        number:
+          min: 1
+          max: 48
+          step: 1
+          unit_of_measurement: h
+          mode: box
+    rain_accumulation_entity:
+      name: Recent rainfall (optional)
+      description: >
+        Sensor giving the rain accumulation over a rolling period (e.g.
+        48 h). With a rain gauge whose daily total resets at midnight,
+        create a "Statistics" helper on that total: characteristic "Sum of
+        differences (nonnegative)", max age 48 h, large sampling size
+        (e.g. 1000).
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          multiple: false
+    rain_accumulation_threshold:
+      name: Recent rainfall threshold (mm)
+      description: Watering skipped if recent rainfall reaches this threshold (0 = ignored).
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.5
+          unit_of_measurement: mm
+          mode: box
+    soil_moisture_entity:
+      name: Soil moisture sensor (optional)
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: moisture
+          multiple: false
+    soil_moisture_threshold:
+      name: Soil moisture threshold (%)
+      default: 40
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: '%'
+          mode: slider
+    zone_value:
+      name: Zone number to water
+      selector:
+        number:
+          min: 1
+          max: 32
+          step: 1
+          mode: box
+    duration_value:
+      name: Base watering duration (minutes)
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    budget_entity:
+      name: Seasonal coefficient / Budget (optional)
+      description: "Entity (input_number) in percent. Empty = 100%. 0% = no watering."
+      default: ""
+      selector:
+        entity:
+          domain: input_number
+    notify_entity:
+      name: iOS/Android notification entity
+      description: "E.g. notify.my_phone. Leave empty to disable alerts."
+      default: ""
+      selector:
+        entity:
+          domain: notify
+    notify_on_success:
+      name: Notify on start
+      default: true
+      selector:
+        boolean:
+    notify_on_skip:
+      name: Notify skipped watering (rain, pause, soil, budget…)
+      default: true
+      selector:
+        boolean:
+    notify_on_complete:
+      name: Notify end of watering / valve closing
+      default: true
+      selector:
+        boolean:
+
+trigger:
+  - platform: state
+    entity_id: !input schedule_entity
+    from: "off"
+    to: "on"
+    id: "start"
+  - platform: state
+    entity_id: !input schedule_entity
+    from: "on"
+    to: "off"
+    id: "stop"
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: "start"
+        sequence:
+          - alias: "Initialize variables"
+            variables:
+              weather_entity_id: !input weather_entity
+              rain_threshold: !input precipitation_threshold
+              soil_entity_id: !input soil_moisture_entity
+              soil_threshold: !input soil_moisture_threshold
+              pause_entity_id: !input pause_sensor_entity
+              fault_entity_id: !input fault_sensor_entity
+              b_entity: !input budget_entity
+              notify_ent: !input notify_entity
+              notify_succ: !input notify_on_success
+              notify_on_skip: !input notify_on_skip
+              notify_on_complete: !input notify_on_complete
+              z_val: !input zone_value
+              d_val_base: !input duration_value
+              rain_entity_id: !input rain_sensor_entity
+              ble_entity_id: !input ble_sensor_entity
+              schedule_entity_id: !input schedule_entity
+              duration_entity_id: !input duration_number_entity
+              valve_entity_id: !input valve_sensor_entity
+              forecast_hours_val: !input forecast_hours
+              rain_acc_entity_id: !input rain_accumulation_entity
+              rain_acc_threshold: !input rain_accumulation_threshold
+              pluie_prevue_mm: -1
+              pluie_prevue_libelle: ""
+
+          - alias: "Get weather forecast"
+            if:
+              - condition: template
+                value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - variables:
+                  pluie_prevue_mm: -1
+                  meteo_features: "{{ state_attr(weather_entity_id, 'supported_features') | int(0) }}"
+              # Hourly forecasts if the entity provides them (bit 2): total
+              # over the next N hours (current hour included).
+              - if:
+                  - condition: template
+                    value_template: "{{ meteo_features | bitwise_and(2) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: hourly
+                    response_variable: rep_horaire
+                  # Copy into the top-level variables (a response variable
+                  # may stay local to this block).
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_horaire[weather_entity_id].forecast | default([])
+                           if rep_horaire is defined and rep_horaire is mapping and weather_entity_id in rep_horaire
+                           else [] %}
+                        {% set debut = now() - timedelta(hours=1) %}
+                        {% set fin = now() + timedelta(hours=forecast_hours_val | int(12)) %}
+                        {% set ns = namespace(total=0, n=0) %}
+                        {% for f in fc %}
+                          {% set t = as_datetime(f.datetime) %}
+                          {% if t is not none and debut <= t < fin %}
+                            {% set ns.total = ns.total + (f.precipitation | default(0) | float(0)) %}
+                            {% set ns.n = ns.n + 1 %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ (ns.total | round(1)) if ns.n > 0 else -1 }}
+                      pluie_prevue_libelle: "over the next {{ forecast_hours_val | int(12) }} hours"
+              # Otherwise (or on failure): today's daily forecast.
+              - if:
+                  - condition: template
+                    value_template: "{{ pluie_prevue_mm | float(-1) < 0 and meteo_features | bitwise_and(1) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: daily
+                    response_variable: rep_jour
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_jour[weather_entity_id].forecast | default([])
+                           if rep_jour is defined and rep_jour is mapping and weather_entity_id in rep_jour
+                           else [] %}
+                        {{ (fc[0].precipitation | default(0) | float(0)) if fc | count > 0 else -1 }}
+                      pluie_prevue_libelle: "today"
+
+          - alias: "Evaluate skip conditions (before BLE)"
+            variables:
+              d_val: >
+                {% set base = d_val_base | float(1) %}
+                {% set budget = 100.0 %}
+                {% if b_entity | default('') not in ['', 'none', none] and states(b_entity) | is_number %}
+                  {% set budget = states(b_entity) | float(100) %}
+                {% endif %}
+                {% if budget <= 0 %}
+                  0
+                {% else %}
+                  {% set raw = (base * budget / 100) | round(0, 'half-up') | int %}
+                  {% set minutes = [raw, 1] | max %}
+                  {% set cap = state_attr(duration_entity_id, 'max') %}
+                  {% set cap = cap | float(60) if cap is not none else 60 %}
+                  {{ [minutes, cap | int] | min }}
+                {% endif %}
+              msg_prefix: "Zone {{ z_val }} ({{ d_val }} min):"
+              skip_blob: >
+                {% set ns = namespace(title='', message='') %}
+                {% set pluie_tombee = states(rain_acc_entity_id) | float(-1)
+                   if rain_acc_entity_id | default('') not in ['', 'none', none] else -1 %}
+                {% set pluie_prevue = pluie_prevue_mm | float(-1) %}
+                {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
+                  {% set ns.title = '🚨 Hardware fault' %}
+                  {% set ns.message = msg_prefix ~ ' An electrical fault was detected on the valve!' %}
+                {% elif pause_entity_id | default('') not in ['', 'none', none] and is_state(pause_entity_id, 'on') %}
+                  {% set ns.title = '⏸️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' The controller is paused.' %}
+                {% elif is_state(rain_entity_id, 'on') %}
+                  {% set ns.title = '🌧️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' The rain sensor is active.' %}
+                {% elif rain_acc_threshold | float(0) > 0 and pluie_tombee >= rain_acc_threshold | float(0) %}
+                  {% set ns.title = '🌧️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_tombee ~ ' mm of rain fell recently (threshold: ' ~ rain_acc_threshold ~ ' mm).' %}
+                {% elif rain_threshold | float(0) > 0 and pluie_prevue >= rain_threshold | float(0) %}
+                  {% set ns.title = '🌦️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_prevue ~ ' mm of rain forecast ' ~ pluie_prevue_libelle ~ ' (threshold: ' ~ rain_threshold ~ ' mm).' %}
+                {% elif soil_entity_id | default('') not in ['', 'none', none]
+                    and states(soil_entity_id) | is_number
+                    and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
+                  {% set ns.title = '🌱 Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' Soil moist enough (' ~ states(soil_entity_id) ~ '%).' %}
+                {% elif d_val | int(0) <= 0 %}
+                  {% set ns.title = '💧 Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' Seasonal budget at 0%, watering skipped.' %}
+                {% endif %}
+                {{ ns.title }}|||{{ ns.message }}
+              skip_title: "{{ skip_blob.split('|||')[0] }}"
+              skip_message: "{{ skip_blob.split('|||')[1] if skip_blob.split('|||') | length > 1 else '' }}"
+
+          - alias: "Skip if excluded (before BLE)"
+            if:
+              - condition: template
+                value_template: "{{ skip_title | default('') | trim != '' }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "{{ skip_title }}"
+                      message: "{{ skip_message }}"
+              - stop: "{{ skip_message }}"
+
+          - alias: "Wait for BLE if needed"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - alias: "Wait for BLE reconnection (max 10 min) or end of time slot"
+                wait_for_trigger:
+                  - platform: state
+                    entity_id: !input ble_sensor_entity
+                    to: "on"
+                    id: ble_on
+                  - platform: state
+                    entity_id: !input schedule_entity
+                    from: "on"
+                    to: "off"
+                    id: schedule_off
+                timeout:
+                  minutes: 10
+                continue_on_timeout: true
+
+          - alias: "Abort if the time slot ended while waiting"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(schedule_entity_id, 'on') }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "⏰ Watering skipped"
+                      message: "{{ msg_prefix }} The schedule time slot ended while waiting for Bluetooth."
+              - stop: "Time slot ended while waiting for BLE."
+
+          - alias: "Abort if BLE is still unreachable"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "📡 Watering impossible"
+                      message: "{{ msg_prefix }} Controller unreachable over Bluetooth after waiting 10 minutes."
+              - stop: "Automation stopped: BLE unreachable."
+
+          - alias: "Get weather forecast again (after waiting)"
+            if:
+              - condition: template
+                value_template: "{{ weather_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - variables:
+                  pluie_prevue_mm: -1
+                  meteo_features: "{{ state_attr(weather_entity_id, 'supported_features') | int(0) }}"
+              # Hourly forecasts if the entity provides them (bit 2): total
+              # over the next N hours (current hour included).
+              - if:
+                  - condition: template
+                    value_template: "{{ meteo_features | bitwise_and(2) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: hourly
+                    response_variable: rep_horaire
+                  # Copy into the top-level variables (a response variable
+                  # may stay local to this block).
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_horaire[weather_entity_id].forecast | default([])
+                           if rep_horaire is defined and rep_horaire is mapping and weather_entity_id in rep_horaire
+                           else [] %}
+                        {% set debut = now() - timedelta(hours=1) %}
+                        {% set fin = now() + timedelta(hours=forecast_hours_val | int(12)) %}
+                        {% set ns = namespace(total=0, n=0) %}
+                        {% for f in fc %}
+                          {% set t = as_datetime(f.datetime) %}
+                          {% if t is not none and debut <= t < fin %}
+                            {% set ns.total = ns.total + (f.precipitation | default(0) | float(0)) %}
+                            {% set ns.n = ns.n + 1 %}
+                          {% endif %}
+                        {% endfor %}
+                        {{ (ns.total | round(1)) if ns.n > 0 else -1 }}
+                      pluie_prevue_libelle: "over the next {{ forecast_hours_val | int(12) }} hours"
+              # Otherwise (or on failure): today's daily forecast.
+              - if:
+                  - condition: template
+                    value_template: "{{ pluie_prevue_mm | float(-1) < 0 and meteo_features | bitwise_and(1) > 0 }}"
+                then:
+                  - action: weather.get_forecasts
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ weather_entity_id }}"
+                    data:
+                      type: daily
+                    response_variable: rep_jour
+                  - variables:
+                      pluie_prevue_mm: >
+                        {% set fc = rep_jour[weather_entity_id].forecast | default([])
+                           if rep_jour is defined and rep_jour is mapping and weather_entity_id in rep_jour
+                           else [] %}
+                        {{ (fc[0].precipitation | default(0) | float(0)) if fc | count > 0 else -1 }}
+                      pluie_prevue_libelle: "today"
+
+          - alias: "Evaluate skip conditions (after BLE)"
+            variables:
+              d_val: >
+                {% set base = d_val_base | float(1) %}
+                {% set budget = 100.0 %}
+                {% if b_entity | default('') not in ['', 'none', none] and states(b_entity) | is_number %}
+                  {% set budget = states(b_entity) | float(100) %}
+                {% endif %}
+                {% if budget <= 0 %}
+                  0
+                {% else %}
+                  {% set raw = (base * budget / 100) | round(0, 'half-up') | int %}
+                  {% set minutes = [raw, 1] | max %}
+                  {% set cap = state_attr(duration_entity_id, 'max') %}
+                  {% set cap = cap | float(60) if cap is not none else 60 %}
+                  {{ [minutes, cap | int] | min }}
+                {% endif %}
+              msg_prefix: "Zone {{ z_val }} ({{ d_val }} min):"
+              skip_blob: >
+                {% set ns = namespace(title='', message='') %}
+                {% set pluie_tombee = states(rain_acc_entity_id) | float(-1)
+                   if rain_acc_entity_id | default('') not in ['', 'none', none] else -1 %}
+                {% set pluie_prevue = pluie_prevue_mm | float(-1) %}
+                {% if fault_entity_id | default('') not in ['', 'none', none] and is_state(fault_entity_id, 'on') %}
+                  {% set ns.title = '🚨 Hardware fault' %}
+                  {% set ns.message = msg_prefix ~ ' An electrical fault was detected on the valve!' %}
+                {% elif pause_entity_id | default('') not in ['', 'none', none] and is_state(pause_entity_id, 'on') %}
+                  {% set ns.title = '⏸️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' The controller is paused.' %}
+                {% elif is_state(rain_entity_id, 'on') %}
+                  {% set ns.title = '🌧️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' The rain sensor is active.' %}
+                {% elif rain_acc_threshold | float(0) > 0 and pluie_tombee >= rain_acc_threshold | float(0) %}
+                  {% set ns.title = '🌧️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_tombee ~ ' mm of rain fell recently (threshold: ' ~ rain_acc_threshold ~ ' mm).' %}
+                {% elif rain_threshold | float(0) > 0 and pluie_prevue >= rain_threshold | float(0) %}
+                  {% set ns.title = '🌦️ Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' ' ~ pluie_prevue ~ ' mm of rain forecast ' ~ pluie_prevue_libelle ~ ' (threshold: ' ~ rain_threshold ~ ' mm).' %}
+                {% elif soil_entity_id | default('') not in ['', 'none', none]
+                    and states(soil_entity_id) | is_number
+                    and (states(soil_entity_id) | float(0)) >= (soil_threshold | float(0)) %}
+                  {% set ns.title = '🌱 Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' Soil moist enough (' ~ states(soil_entity_id) ~ '%).' %}
+                {% elif d_val | int(0) <= 0 %}
+                  {% set ns.title = '💧 Watering skipped' %}
+                  {% set ns.message = msg_prefix ~ ' Seasonal budget at 0%, watering skipped.' %}
+                {% endif %}
+                {{ ns.title }}|||{{ ns.message }}
+              skip_title: "{{ skip_blob.split('|||')[0] }}"
+              skip_message: "{{ skip_blob.split('|||')[1] if skip_blob.split('|||') | length > 1 else '' }}"
+
+          - alias: "Skip if excluded (after BLE)"
+            if:
+              - condition: template
+                value_template: "{{ skip_title | default('') | trim != '' }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_skip and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "{{ skip_title }}"
+                      message: "{{ skip_message }}"
+              - stop: "{{ skip_message }}"
+
+          - alias: "Set the zone"
+            action: number.set_value
+            target:
+              entity_id: !input zone_number_entity
+            data:
+              value: !input zone_value
+
+          - alias: "Set the duration (budget + floor/ceiling)"
+            action: number.set_value
+            target:
+              entity_id: !input duration_number_entity
+            data:
+              value: "{{ d_val }}"
+
+          - alias: "Let the controller apply zone and duration"
+            delay:
+              seconds: 2
+
+          - alias: "Remember the command time"
+            variables:
+              t_press_ts: "{{ as_timestamp(now()) }}"
+
+          - alias: "Start watering"
+            action: button.press
+            target:
+              entity_id: !input start_button_entity
+
+          # The proxy waits for the BLE connection, checks and retries up
+          # to 3 times (≈ 6 min worst case): wait for the opening over the
+          # same duration. last_changed after the command = opening caused
+          # by THIS command, not an earlier state.
+          - alias: "Confirm the valve opened"
+            if:
+              - condition: template
+                value_template: "{{ valve_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - wait_template: >
+                  {{ is_state(valve_entity_id, 'on')
+                     and as_timestamp(states[valve_entity_id].last_changed, 0) >= t_press_ts | float(0) }}
+                timeout:
+                  minutes: 6
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ not wait.completed }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "🚫 Watering not started"
+                          message: "{{ msg_prefix }} the valve did not open (controller unreachable or command rejected)."
+                  - stop: "Valve opening not confirmed."
+
+          - alias: "Notify start"
+            if:
+              - condition: template
+                value_template: "{{ notify_succ and notify_ent | default('') not in ['', 'none', none] }}"
+            then:
+              - action: notify.send_message
+                continue_on_error: true
+                target:
+                  entity_id: "{{ notify_ent }}"
+                data:
+                  title: "💧 Watering in progress"
+                  message: >
+                    {% if valve_entity_id | default('') not in ['', 'none', none] %}Valve open{% else %}Start requested{% endif %}
+                    for Zone {{ z_val }} ({{ d_val }} minutes).
+
+          - alias: "Track the end of watering"
+            if:
+              - condition: template
+                value_template: "{{ valve_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - variables:
+                  t_open_ts: "{{ as_timestamp(now()) }}"
+              # The controller stops by itself after d_val minutes; 5 min of
+              # margin cover BLE connection gaps before the state comes back.
+              - wait_template: "{{ is_state(valve_entity_id, 'off') }}"
+                timeout:
+                  minutes: "{{ d_val | int(1) + 5 }}"
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ wait.completed }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "✅ Watering finished"
+                          message: >
+                            Zone {{ z_val }}: valve closed after
+                            {{ ((as_timestamp(now()) - t_open_ts | float(0)) / 60) | round(0) | int }} min
+                            (planned: {{ d_val }} min).
+                else:
+                  - alias: "Valve still open: forced closing"
+                    action: button.press
+                    target:
+                      entity_id: !input stop_button_entity
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "⚠️ Valve still open"
+                          message: "Zone {{ z_val }}: valve still open 5 min after the planned duration ({{ d_val }} min), forced closing requested."
+            else:
+              - alias: "Notify end after the duration (no check)"
+                if:
+                  - condition: template
+                    value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - delay:
+                      minutes: "{{ d_val | int(1) }}"
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "✅ Watering finished"
+                      message: "Zone {{ z_val }}: {{ d_val }} min cycle finished."
+
+      - conditions:
+          - condition: trigger
+            id: "stop"
+        sequence:
+          - alias: "Stop variables"
+            variables:
+              notify_ent: !input notify_entity
+              notify_on_complete: !input notify_on_complete
+              z_val: !input zone_value
+              ble_entity_id: !input ble_sensor_entity
+
+          - alias: "Wait for BLE to close the valve (max 2 min)"
+            if:
+              - condition: template
+                value_template: "{{ not is_state(ble_entity_id, 'on') }}"
+            then:
+              - wait_for_trigger:
+                  - platform: state
+                    entity_id: !input ble_sensor_entity
+                    to: "on"
+                    id: ble_on
+                timeout:
+                  minutes: 2
+                continue_on_timeout: true
+
+          - alias: "Close the valve if BLE is reachable"
+            if:
+              - condition: template
+                value_template: "{{ is_state(ble_entity_id, 'on') }}"
+            then:
+              - action: button.press
+                target:
+                  entity_id: !input stop_button_entity
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "🔒 Valve closed"
+                      message: "Zone {{ z_val }}: end of time slot, valve closed."
+            else:
+              - if:
+                  - condition: template
+                    value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "📡 Closing impossible"
+                      message: "Zone {{ z_val }}: controller unreachable over Bluetooth, the valve could not be closed."
+              - stop: "Closing impossible: BLE unreachable."
+
+mode: restart

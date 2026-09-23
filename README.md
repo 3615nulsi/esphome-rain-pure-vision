@@ -49,7 +49,7 @@ Le boîtier n'accepte qu'**une seule connexion BLE à la fois** : tant que l'ESP
 
 ## 🗓️ Blueprint de programmation
 
-Le fichier `blueprint_programmation_rain_pure_vision_esphome.yaml` est un blueprint d'automatisation Home Assistant (HA ≥ 2024.10). À importer via **Paramètres → Automatisations et scènes → Blueprints → Importer un blueprint**, avec l'URL du fichier sur GitHub.
+Le fichier `blueprint_programmation_rain_pure_vision_esphome.yaml` est un blueprint d'automatisation Home Assistant (HA ≥ 2024.10). Une version anglaise, de logique identique, est fournie : `blueprint_rain_pure_vision_esphome_en.yaml`. À importer via **Paramètres → Automatisations et scènes → Blueprints → Importer un blueprint**, avec l'URL du fichier sur GitHub.
 
 - Arrosage d'une zone pendant les créneaux d'un planning (entrée *Planning* de Home Assistant), vanne fermée en fin de créneau.
 - Durée ajustée par un coefficient saisonnier (`input_number` en %).
@@ -121,7 +121,7 @@ Les entités sont nommées en français par défaut. Pour des noms en anglais, a
     files: [rain_pure_vision.yaml, langues/en.yaml]
 ```
 
-⚠️ Choisissez la langue **dès l'installation** : Home Assistant identifie les entités par leur nom, donc changer de langue plus tard crée de nouvelles entités (les anciennes deviennent indisponibles et les automatisations qui les utilisent sont à refaire). Un nom précis peut aussi être remplacé dans les `substitutions:` de l'appareil (clés `rain_nom_…`, voir le début de `rain_pure_vision.yaml`). Le blueprint fonctionne quelle que soit la langue des entités, mais ses textes et notifications restent en français.
+⚠️ Choisissez la langue **dès l'installation** : Home Assistant identifie les entités par leur nom, donc changer de langue plus tard crée de nouvelles entités (les anciennes deviennent indisponibles et les automatisations qui les utilisent sont à refaire). Un nom précis peut aussi être remplacé dans les `substitutions:` de l'appareil (clés `rain_nom_…`, voir le début de `rain_pure_vision.yaml`). Le blueprint fonctionne quelle que soit la langue des entités ; il existe en français et en anglais (voir ci-dessus).
 
 ### Mises à jour
 
