@@ -1,0 +1,111 @@
+# Validation automatique à chaque pull request et à chaque push sur main :
+# un package cassé sur main casserait la prochaine compilation de tous les
+# appareils qui suivent ref: main.
+
+name: Validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  esphome:
+    name: ESPHome (validation + compilation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Installer ESPHome (dernière version)
+        run: pip install esphome
+
+      # Deux appareils de test qui incluent le package LOCAL (celui de la
+      # branche testée, pas celui de main) : l'exemple autonome du dépôt, et
+      # un appareil existant qui a déjà un proxy Bluetooth et une horloge HA.
+      - name: Préparer les appareils de test
+        run: |
+          mkdir -p ci-build
+          cat > ci-build/secrets.yaml <<'EOF'
+          wifi_ssid: "ci"
+          wifi_password: "ci-password"
+          ap_fallback_password: "ci-password"
+          api_encryption_key: "q4Cz3yY0Qb3Qn7X8m0kZ5t3v1Q7m9z2X6c4b8n1m0aE="
+          EOF
+          python - <<'EOF'
+          import re
+          s = open("proxy_rain_vision_pure.yml", encoding="utf-8").read()
+          s = s.replace("XX:XX:XX:XX:XX:XX", "AA:BB:CC:DD:EE:FF")
+          s, n = re.subn(r"\npackages:\n(?:  .*\n)+",
+                         "\npackages:\n  rain_pure_vision: !include ../rain_pure_vision.yaml\n", s)
+          assert n == 1, "bloc packages: introuvable dans l'exemple"
+          open("ci-build/dedie.yaml", "w", encoding="utf-8").write(s)
+          EOF
+          cat > ci-build/existant.yaml <<'EOF'
+          substitutions:
+            rain_mac: "AA:BB:CC:DD:EE:FF"
+          packages:
+            rain_pure_vision: !include ../rain_pure_vision.yaml
+          esphome:
+            name: appareil-existant
+          esp32:
+            board: esp32-s3-devkitc-1
+            framework:
+              type: esp-idf
+          logger:
+          api:
+          ota:
+            - platform: esphome
+          wifi:
+            ssid: !secret wifi_ssid
+            password: !secret wifi_password
+          esp32_ble:
+            max_connections: 4
+          esp32_ble_tracker:
+            scan_parameters:
+              active: true
+          bluetooth_proxy:
+            active: true
+          time:
+            - platform: homeassistant
+              id: ha_time
+          EOF
+
+      - name: Valider l'exemple autonome
+        run: esphome config ci-build/dedie.yaml
+
+      - name: Valider l'intégration dans un appareil existant
+        run: esphome config ci-build/existant.yaml
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ci-build/.esphome
+          key: esphome-${{ runner.os }}-${{ hashFiles('rain_pure_vision.yaml', 'proxy_rain_vision_pure.yml') }}
+          restore-keys: esphome-${{ runner.os }}-
+
+      # La compilation vérifie aussi le code C++ des lambdas, que la
+      # validation YAML ne contrôle pas.
+      - name: Compiler l'exemple autonome
+        run: esphome compile ci-build/dedie.yaml
+
+  blueprint:
+    name: Blueprint Home Assistant
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Installer les dépendances
+        run: pip install pyyaml jinja2
+
+      - name: Vérifier le blueprint
+        run: python .github/scripts/verifier_blueprint.py

@@ -33,8 +33,8 @@ Concretely, this means:
 
 | Feature | Details |
 |---|---|
-| **Manual watering** | Start a cycle on the zone and duration of your choice (1 to 60 min) |
-| **Close valve immediately** | General "stop" button, all zones |
+| **Manual watering** | Start a cycle on the zone and duration of your choice (1 to 60 min). The proxy waits for the BLE connection, **checks that the valve actually opened** on the right zone and retries otherwise (3 attempts) |
+| **Close valve immediately** | General "stop" button, all zones, with the same check and retries |
 | **Scheduled pause** | Suspends automatic programs for an adjustable duration (1 to 14 days), with **real confirmation** that the controller actually registered the pause (not just an optimistic local state) |
 | **Cancel pause** | Re-enables automatic programs |
 | **Valve state** (open/closed) | Derived from the real state of active zones |
@@ -44,6 +44,7 @@ Concretely, this means:
 | **Pump active** | Detects pump activation (if applicable) |
 | **Valve faults** | Detects open-circuit / short-circuit faults on the solenoid valves, overall and per zone |
 | **Controller status flags** | Default password not changed, firmware (FW) error, hardware (HW) error, battery charging, watering history full (zones 1 and 2) |
+| **Stored programs** | Number of programs stored in the controller, active or disabled (replaces the former "Cycles d'arrosage" sensor, which was not a watering counter) |
 | **ACQUA sensors** | Number of ACQUA sensors detected by the controller (255 = value not refreshed yet) |
 | **Battery** | Controller's battery level |
 | **BLE connection** | Binary sensor showing real-time connection status |
