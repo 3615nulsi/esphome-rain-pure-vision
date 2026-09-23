@@ -1,11 +1,13 @@
-# Arrosage programmé (Rain Pure Vision) V5.4
+# Arrosage programmé (Rain Pure Vision) V5.5
 # Base V5.1 + P0/P1 (restart, from, re-check BLE, durée, stop BLE)
+# V5.5 : entrée facultative « État de la vanne » → ouverture confirmée
+# (sinon alerte) et fin d'arrosage réelle (sinon fermeture forcée).
 # Notifications : UNIQUEMENT notify.send_message + entité notify.*
 # (pas d'action notify.iphone_* / notify.mobile_app_* — HA 2026 les refuse)
 # Pas de sections, pas d'ancres YAML — formulaire blueprint compatible.
 
 blueprint:
-  name: Arrosage programmé (Rain Pure Vision) - V5.4
+  name: Arrosage programmé (Rain Pure Vision) - V5.5
   description: >
     Arrosage planifié avec budget saisonnier, résilience Bluetooth,
     sécurités matérielles et notifications iPhone via notify.send_message.
@@ -41,6 +43,17 @@ blueprint:
       selector:
         entity:
           domain: button
+    valve_sensor_entity:
+      name: "Entité : État de la vanne (Facultatif, recommandé)"
+      description: >
+        Permet de vérifier que la vanne s'est réellement ouverte (alerte
+        sinon) et de notifier la fin réelle de l'arrosage (fermeture forcée
+        si la vanne reste ouverte). Vide = comportement des versions
+        précédentes (notifications sans vérification).
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
     ble_sensor_entity:
       name: "Entité : Connexion BLE au boîtier"
       selector:
@@ -182,6 +195,7 @@ action:
               ble_entity_id: !input ble_sensor_entity
               schedule_entity_id: !input schedule_entity
               duration_entity_id: !input duration_number_entity
+              valve_entity_id: !input valve_sensor_entity
 
           - alias: "Récupérer les prévisions météo"
             if:
@@ -427,10 +441,46 @@ action:
             delay:
               seconds: 2
 
+          - alias: "Mémoriser l'heure de la commande"
+            variables:
+              t_press_ts: "{{ as_timestamp(now()) }}"
+
           - alias: "Démarrer l'arrosage"
             action: button.press
             target:
               entity_id: !input start_button_entity
+
+          # Le proxy attend la connexion BLE, vérifie et réessaie jusqu'à
+          # 3 fois (≈ 6 min au pire) : on attend l'ouverture sur la même
+          # durée. last_changed postérieur à la commande = ouverture
+          # consécutive à CETTE commande, pas un état antérieur.
+          - alias: "Confirmer l'ouverture de la vanne"
+            if:
+              - condition: template
+                value_template: "{{ valve_entity_id | default('') not in ['', 'none', none] }}"
+            then:
+              - wait_template: >
+                  {{ is_state(valve_entity_id, 'on')
+                     and as_timestamp(states[valve_entity_id].last_changed, 0) >= t_press_ts | float(0) }}
+                timeout:
+                  minutes: 6
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ not wait.completed }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "🚫 Arrosage non démarré"
+                          message: "{{ msg_prefix }} la vanne ne s'est pas ouverte (boîtier injoignable ou commande refusée)."
+                  - stop: "Ouverture de la vanne non confirmée."
 
           - alias: "Notifier le démarrage"
             if:
@@ -443,22 +493,72 @@ action:
                   entity_id: "{{ notify_ent }}"
                 data:
                   title: "💧 Arrosage en cours"
-                  message: "Démarrage réussi pour la Zone {{ z_val }} ({{ d_val }} minutes)."
+                  message: >
+                    {% if valve_entity_id | default('') not in ['', 'none', none] %}Vanne ouverte{% else %}Démarrage demandé{% endif %}
+                    pour la Zone {{ z_val }} ({{ d_val }} minutes).
 
-          - alias: "Notifier la fin après la durée"
+          - alias: "Suivre la fin de l'arrosage"
             if:
               - condition: template
-                value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                value_template: "{{ valve_entity_id | default('') not in ['', 'none', none] }}"
             then:
-              - delay:
-                  minutes: "{{ d_val | int(1) }}"
-              - action: notify.send_message
-                continue_on_error: true
-                target:
-                  entity_id: "{{ notify_ent }}"
-                data:
-                  title: "✅ Arrosage terminé"
-                  message: "Zone {{ z_val }} : cycle de {{ d_val }} min terminé."
+              - variables:
+                  t_open_ts: "{{ as_timestamp(now()) }}"
+              # Le boîtier coupe lui-même après d_val minutes ; 5 min de marge
+              # couvrent les trous de connexion BLE avant remontée de l'état.
+              - wait_template: "{{ is_state(valve_entity_id, 'off') }}"
+                timeout:
+                  minutes: "{{ d_val | int(1) + 5 }}"
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: "{{ wait.completed }}"
+                then:
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "✅ Arrosage terminé"
+                          message: >
+                            Zone {{ z_val }} : vanne fermée après
+                            {{ ((as_timestamp(now()) - t_open_ts | float(0)) / 60) | round(0) | int }} min
+                            (prévu : {{ d_val }} min).
+                else:
+                  - alias: "Vanne restée ouverte : fermeture forcée"
+                    action: button.press
+                    target:
+                      entity_id: !input stop_button_entity
+                  - if:
+                      - condition: template
+                        value_template: "{{ notify_ent | default('') not in ['', 'none', none] }}"
+                    then:
+                      - action: notify.send_message
+                        continue_on_error: true
+                        target:
+                          entity_id: "{{ notify_ent }}"
+                        data:
+                          title: "⚠️ Vanne toujours ouverte"
+                          message: "Zone {{ z_val }} : vanne encore ouverte 5 min après la durée prévue ({{ d_val }} min), fermeture forcée demandée."
+            else:
+              - alias: "Notifier la fin après la durée (sans vérification)"
+                if:
+                  - condition: template
+                    value_template: "{{ notify_on_complete and notify_ent | default('') not in ['', 'none', none] }}"
+                then:
+                  - delay:
+                      minutes: "{{ d_val | int(1) }}"
+                  - action: notify.send_message
+                    continue_on_error: true
+                    target:
+                      entity_id: "{{ notify_ent }}"
+                    data:
+                      title: "✅ Arrosage terminé"
+                      message: "Zone {{ z_val }} : cycle de {{ d_val }} min terminé."
 
       - conditions:
           - condition: trigger

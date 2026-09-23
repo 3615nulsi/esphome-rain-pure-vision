@@ -88,6 +88,35 @@ globals:
     restore_value: false
     initial_value: 'false'
 
+  # Suivi des commandes arrosage / fermeture (scripts plus bas) :
+  # rain_status_seq compte les trames STATUS complètes reçues, pour ne
+  # valider une commande que sur une trame reçue APRÈS son envoi ; zone et
+  # durée sont figées au moment de l'appui.
+  - id: rain_status_seq
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  - id: rain_cmd_seq0
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  - id: rain_cmd_ok
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: rain_cmd_essai
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: rain_cmd_zone
+    type: int
+    restore_value: false
+    initial_value: '1'
+  - id: rain_cmd_minutes
+    type: int
+    restore_value: false
+    initial_value: '10'
+
 script:
   # TIME : timestamp local encodé en big-endian sur 4 octets
   # (unix UTC + offset local + 2s de marge), écrit à chaque connexion.
@@ -177,6 +206,160 @@ script:
       - delay: 2s
       - component.update: rain_offperiods_raw_sensor
 
+  # --- Commandes fiabilisées : arrosage manuel et fermeture -------------
+  # Une écriture BLE échoue sans erreur visible si la session (coupée par
+  # le boîtier toutes les ~60 s) tombe pendant la séquence. Chaque commande
+  # est donc : attendre la connexion → rejouer la séquence de l'app (script
+  # "tentative") → vérifier sur une trame STATUS reçue APRÈS la séquence
+  # que le boîtier a obéi → sinon recommencer (3 tentatives au total).
+  # La séquence est isolée dans son propre script : si la connexion tombe
+  # en pleine écriture, ESPHome l'interrompt, et script.wait rend quand
+  # même la main au script principal.
+
+  # Séquence de l'app : 0x06 (stop/ready) → trame MANUAL → 0x05 (start).
+  - id: rain_tentative_arrosage
+    mode: restart
+    then:
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x06]
+      - delay: 500ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200E005-4201-37BB-EA11-42A458AA4846' # MANUAL
+          value: !lambda |-
+            std::vector<uint8_t> frame(64, 0x00);
+            int zone = id(rain_cmd_zone);
+            int seconds_dur = id(rain_cmd_minutes) * 60; // le firmware attend des secondes
+            if (zone >= 1 && zone <= 32) {
+              int idx = (zone - 1) * 2;
+              frame[idx]     = (uint8_t) (seconds_dur / 256);
+              frame[idx + 1] = (uint8_t) (seconds_dur % 256);
+            }
+            return frame;
+      - delay: 1000ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x05]
+
+  # L'app officielle enchaîne toujours 0x08 (close) avec 0x06 (ready) ;
+  # sans ce second appel la FSM du boîtier peut rester dans un état
+  # incohérent après une fermeture manuelle.
+  - id: rain_tentative_fermeture
+    mode: restart
+    then:
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x08]
+      - delay: 500ms
+      - ble_client.ble_write:
+          id: rain_pure_vision
+          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
+          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
+          value: [0x06]
+
+  # Succès = trame STATUS postérieure montrant la vanne ouverte sur la
+  # zone demandée.
+  - id: rain_arrosage_manuel
+    mode: restart
+    then:
+      # La dernière commande l'emporte : on abandonne l'autre en cours.
+      - script.stop: rain_fermeture_vanne
+      - script.stop: rain_tentative_fermeture
+      - lambda: |-
+          id(rain_cmd_zone) = (int) id(rain_zone_manuelle).state;
+          id(rain_cmd_minutes) = (int) id(rain_duree_arrosage).state;
+          id(rain_cmd_ok) = false;
+          id(rain_cmd_essai) = 0;
+      - repeat:
+          count: 3
+          then:
+            - if:
+                condition:
+                  lambda: return !id(rain_cmd_ok);
+                then:
+                  - lambda: id(rain_cmd_essai) += 1;
+                  - wait_until:
+                      condition:
+                        binary_sensor.is_on: rain_ble_connecte
+                      timeout: 90s
+                  - script.execute: rain_tentative_arrosage
+                  - script.wait: rain_tentative_arrosage
+                  - lambda: id(rain_cmd_seq0) = id(rain_status_seq);
+                  - delay: 1s
+                  - component.update: rain_status_raw
+                  - wait_until:
+                      condition:
+                        lambda: |-
+                          return id(rain_status_seq) > id(rain_cmd_seq0)
+                              && id(rain_binsens_vanne).state
+                              && (int) id(rain_sens_zone_active).state == id(rain_cmd_zone);
+                      timeout: 20s
+                  - lambda: |-
+                      id(rain_cmd_ok) = id(rain_status_seq) > id(rain_cmd_seq0)
+                              && id(rain_binsens_vanne).state
+                              && (int) id(rain_sens_zone_active).state == id(rain_cmd_zone);
+                      if (id(rain_cmd_ok)) {
+                        ESP_LOGI("rain", "Arrosage zone %d (%d min) confirmé (tentative %d)", id(rain_cmd_zone), id(rain_cmd_minutes), id(rain_cmd_essai));
+                      } else {
+                        ESP_LOGW("rain", "Arrosage zone %d non confirmé (tentative %d/3)", id(rain_cmd_zone), id(rain_cmd_essai));
+                      }
+      - lambda: |-
+          if (!id(rain_cmd_ok)) {
+            ESP_LOGE("rain", "Arrosage zone %d : échec après 3 tentatives", id(rain_cmd_zone));
+          }
+
+  # Succès = trame STATUS postérieure montrant la vanne fermée.
+  - id: rain_fermeture_vanne
+    mode: restart
+    then:
+      # La dernière commande l'emporte : on abandonne l'autre en cours.
+      - script.stop: rain_arrosage_manuel
+      - script.stop: rain_tentative_arrosage
+      - lambda: |-
+          id(rain_cmd_ok) = false;
+          id(rain_cmd_essai) = 0;
+      - repeat:
+          count: 3
+          then:
+            - if:
+                condition:
+                  lambda: return !id(rain_cmd_ok);
+                then:
+                  - lambda: id(rain_cmd_essai) += 1;
+                  - wait_until:
+                      condition:
+                        binary_sensor.is_on: rain_ble_connecte
+                      timeout: 90s
+                  - script.execute: rain_tentative_fermeture
+                  - script.wait: rain_tentative_fermeture
+                  - lambda: id(rain_cmd_seq0) = id(rain_status_seq);
+                  - delay: 1s
+                  - component.update: rain_status_raw
+                  - wait_until:
+                      condition:
+                        lambda: |-
+                          return id(rain_status_seq) > id(rain_cmd_seq0) && !id(rain_binsens_vanne).state;
+                      timeout: 20s
+                  - lambda: |-
+                      id(rain_cmd_ok) = id(rain_status_seq) > id(rain_cmd_seq0) && !id(rain_binsens_vanne).state;
+                      if (id(rain_cmd_ok)) {
+                        ESP_LOGI("rain", "Fermeture de la vanne confirmée (tentative %d)", id(rain_cmd_essai));
+                      } else {
+                        ESP_LOGW("rain", "Fermeture de la vanne non confirmée (tentative %d/3)", id(rain_cmd_essai));
+                      }
+      - lambda: |-
+          if (!id(rain_cmd_ok)) {
+            ESP_LOGE("rain", "Fermeture de la vanne : échec après 3 tentatives");
+          }
+
 number:
   - platform: template
     name: "Zone à arroser"
@@ -248,9 +431,11 @@ sensor:
       if (x.size() >= 21) {
         id(rain_binsens_pluie).publish_state(x[6] > 0);
 
-        uint16_t icycles = ((uint16_t) x[8] << 8) | x[9];
+        // NUMBER_OF_ICYCLES (cf. DecodeStatus côté app) : nombre de
+        // programmes enregistrés dans le boîtier, actifs ou non.
+        uint16_t nb_programmes = ((uint16_t) x[8] << 8) | x[9];
         uint16_t remaining = ((uint16_t) x[10] << 8) | x[11];
-        id(rain_sens_cycles).publish_state(icycles);
+        id(rain_sens_nb_programmes).publish_state(nb_programmes);
         id(rain_sens_temps_restant).publish_state(remaining);
 
         // 255 = valeur pas encore rafraîchie côté boîtier (comportement
@@ -287,6 +472,9 @@ sensor:
         id(rain_binsens_defaut_ouvert_z2).publish_state((x[16] >> 1) & 0x01);
         id(rain_binsens_defaut_courtcircuit_z1).publish_state(x[20] & 0x01);
         id(rain_binsens_defaut_courtcircuit_z2).publish_state((x[20] >> 1) & 0x01);
+
+        // Trame complète traitée : sert à la vérification des commandes.
+        id(rain_status_seq) += 1;
       }
       return fsm_state;
 
@@ -344,12 +532,15 @@ sensor:
     unit_of_measurement: "s"
     state_class: measurement
 
+  # Anciennement "Cycles d'arrosage" : ce n'est pas un compteur
+  # d'arrosages mais le nombre de programmes (iCycles) stockés dans le
+  # boîtier, actifs ou désactivés (NUMBER_OF_ICYCLES dans l'app).
   - platform: template
-    name: "Cycles d'arrosage"
-    id: rain_sens_cycles
-    icon: "mdi:counter"
+    name: "Programmes enregistrés"
+    id: rain_sens_nb_programmes
+    icon: "mdi:calendar-multiple"
     entity_category: diagnostic
-    state_class: total_increasing
+    accuracy_decimals: 0
 
   - platform: template
     name: "Sondes ACQUA détectées"
@@ -459,55 +650,18 @@ binary_sensor:
     entity_category: diagnostic
 
 button:
+  # Commandes : 0x04 normal, 0x05 start manual, 0x06 stop, 0x08 close all.
+  # Les séquences, la vérification et les nouvelles tentatives sont dans
+  # les scripts rain_fermeture_vanne / rain_arrosage_manuel.
   - platform: template
     name: "Fermer la vanne"
     on_press:
-      - ble_client.ble_write:
-          id: rain_pure_vision
-          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
-          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
-          value: [0x08]
-      - delay: 500ms
-      # L'app officielle enchaîne toujours 0x08 (close) avec 0x06 (ready) ;
-      # sans ce second appel la FSM du boîtier peut rester dans un état
-      # incohérent après une fermeture manuelle.
-      - ble_client.ble_write:
-          id: rain_pure_vision
-          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
-          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
-          value: [0x06]
+      - script.execute: rain_fermeture_vanne
 
-  # Commandes : 0x04 normal, 0x05 start manual, 0x06 stop, 0x08 close all
   - platform: template
     name: "Arrosage manuel"
     on_press:
-      - ble_client.ble_write:
-          id: rain_pure_vision
-          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
-          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
-          value: [0x06]
-      - delay: 500ms
-      - ble_client.ble_write:
-          id: rain_pure_vision
-          service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
-          characteristic_uuid: '0200E005-4201-37BB-EA11-42A458AA4846' # MANUAL
-          value: !lambda |-
-            std::vector<uint8_t> frame(64, 0x00);
-            int zone = (int) id(rain_zone_manuelle).state;
-            int minutes = (int) id(rain_duree_arrosage).state;
-            int seconds_dur = minutes * 60; // le firmware attend des secondes
-            if (zone >= 1 && zone <= 32) {
-              int idx = (zone - 1) * 2;
-              frame[idx]     = (uint8_t) (seconds_dur / 256);
-              frame[idx + 1] = (uint8_t) (seconds_dur % 256);
-            }
-            return frame;
-      - delay: 1000ms
-      - ble_client.ble_write:
-          id: rain_pure_vision
-          service_uuid: '0200F000-4201-37BB-EA11-42A458AA4846'
-          characteristic_uuid: '0200F001-4201-37BB-EA11-42A458AA4846'
-          value: [0x05]
+      - script.execute: rain_arrosage_manuel
 
   - platform: template
     name: "Pause"

@@ -33,8 +33,8 @@ Concrètement, cela veut dire :
 
 | Fonctionnalité | Détail |
 |---|---|
-| **Arrosage manuel** | Démarrage d'un cycle sur la zone et la durée de votre choix (1 à 60 min) |
-| **Fermeture immédiate de la vanne** | Bouton "stop" général, toutes zones |
+| **Arrosage manuel** | Démarrage d'un cycle sur la zone et la durée de votre choix (1 à 60 min). Le proxy attend la connexion BLE, **vérifie que la vanne s'est réellement ouverte** sur la bonne zone et réessaie sinon (3 tentatives) |
+| **Fermeture immédiate de la vanne** | Bouton "stop" général, toutes zones, avec la même vérification et les mêmes nouvelles tentatives |
 | **Pause programmée** | Suspend les programmes automatiques pour une durée réglable (1 à 14 jours), avec **vérification réelle** que le boîtier a bien pris en compte la pause |
 | **Annulation de pause** | Réactive les programmes automatiques |
 | **État de la vanne** (ouverte/fermée) | Déduit de l'état réel des zones actives |
@@ -44,6 +44,7 @@ Concrètement, cela veut dire :
 | **Pompe active** | Détection d'activation de la pompe (le cas échéant) |
 | **Défauts électrovanne** | Détection de circuit ouvert / court-circuit sur les électrovannes, globalement et zone par zone |
 | **Indicateurs d'état du boîtier** | Mot de passe par défaut non changé, erreur logicielle (FW), erreur matérielle (HW), charge de la batterie en cours, historique d'arrosage plein (zones 1 et 2) |
+| **Programmes enregistrés** | Nombre de programmes stockés dans le boîtier, actifs ou désactivés (remplace l'ancien capteur « Cycles d'arrosage », qui n'était pas un compteur d'arrosages) |
 | **Sondes ACQUA** | Nombre de sondes ACQUA détectées par le boîtier (255 = valeur pas encore rafraîchie) |
 | **Batterie** | Niveau de batterie du boîtier |
 | **Connexion BLE** | Capteur binaire diagnostiquant l'état de la connexion en temps réel |
