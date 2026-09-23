@@ -15,9 +15,9 @@ jobs:
     name: ESPHome (validation + compilation)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -99,7 +99,7 @@ jobs:
           ! grep -q 'name: Fermer la vanne' ci-build/en.txt
           ! grep -q 'rain_nom_' <(grep ' name: ' ci-build/fr.txt ci-build/en.txt)
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.platformio
@@ -116,9 +116,9 @@ jobs:
     name: Blueprint Home Assistant
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
