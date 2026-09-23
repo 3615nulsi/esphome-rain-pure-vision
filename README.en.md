@@ -42,7 +42,9 @@ Concretely, this means:
 | **Time remaining** | Time remaining on the current cycle (in seconds) |
 | **Rain sensor** | State of the controller's rain sensor, if fitted |
 | **Pump active** | Detects pump activation (if applicable) |
-| **Valve faults** | Detects open-circuit / short-circuit faults on the solenoid valves |
+| **Valve faults** | Detects open-circuit / short-circuit faults on the solenoid valves, overall and per zone |
+| **Controller status flags** | Default password not changed, firmware (FW) error, hardware (HW) error, battery charging, watering history full (zones 1 and 2) |
+| **ACQUA sensors** | Number of ACQUA sensors detected by the controller (255 = value not refreshed yet) |
 | **Battery** | Controller's battery level |
 | **BLE connection** | Binary sensor showing real-time connection status |
 | **Time sync** | The controller's clock is automatically resynced on every connection and every NTP sync |
@@ -98,7 +100,7 @@ Since the Rain Pure Vision's BLE protocol isn't documented, this project relies 
 
 - **Tested on a single 2-zone Rain Pure Vision controller only.** Behavior on other variants (more zones, other generation) is not guaranteed.
 - The exact UUID for the `TIME` characteristic (`0200F004`) was inferred by analogy with other characteristics in the same service, but couldn't be confirmed line-by-line in the source code (the codebase is minified/obfuscated).
-- The `STATUS_FLAG` bits (hardware errors, default password not changed, etc.) are **not** exposed: their exact position depends on the controller model and couldn't be confirmed with certainty.
+- The `STATUS_FLAG` bits (hardware errors, default password not changed, etc.) are decoded based on the official app's `UIntToStatus` function. Their position may vary by controller model and has only been checked on a 2-zone controller. The "history full" flags for zones 3 to 5 are not exposed.
 - The 60-second disconnect cycle can occasionally delay a state update (e.g., right after a pause), without preventing normal operation.
 
 ---

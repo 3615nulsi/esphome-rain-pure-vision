@@ -42,7 +42,9 @@ Concrètement, cela veut dire :
 | **Temps restant** | Temps restant sur le cycle en cours (en secondes) |
 | **Capteur de pluie** | État du capteur de pluie du boîtier, si équipé |
 | **Pompe active** | Détection d'activation de la pompe (le cas échéant) |
-| **Défauts électrovanne** | Détection de circuit ouvert / court-circuit sur les électrovannes |
+| **Défauts électrovanne** | Détection de circuit ouvert / court-circuit sur les électrovannes, globalement et zone par zone |
+| **Indicateurs d'état du boîtier** | Mot de passe par défaut non changé, erreur logicielle (FW), erreur matérielle (HW), charge de la batterie en cours, historique d'arrosage plein (zones 1 et 2) |
+| **Sondes ACQUA** | Nombre de sondes ACQUA détectées par le boîtier (255 = valeur pas encore rafraîchie) |
 | **Batterie** | Niveau de batterie du boîtier |
 | **Connexion BLE** | Capteur binaire diagnostiquant l'état de la connexion en temps réel |
 | **Synchronisation de l'heure** | L'heure du boîtier est automatiquement resynchronisée à chaque connexion et à chaque synchro NTP |
@@ -98,7 +100,7 @@ Le protocole BLE du Rain Pure Vision n'étant pas documenté, ce projet s'appuie
 
 *Testé uniquement sur un seul boîtier Rain Pure Vision 2 zones.** Le comportement sur d'autres variantes (plus de zones, autre génération) n'est pas garanti.
 - L'UUID exact de la caractéristique `TIME` (`0200F004`) a été déduit par analogie avec les autres caractéristiques du même service, mais n'a pas pu être confirmé ligne à ligne dans le code source (la fonction correspondante référence le nom `'TIME'`, pas l'UUID brut). Ça fonctionne dans mes tests, mais à surveiller.
-- Les bits `STATUS_FLAG` (erreurs matérielles, mot de passe par défaut non changé, etc.) ne sont **pas** exposés : leur position exacte dépend du modèle de boîtier et n'a pas pu être confirmée avec certitude.
+- Les bits `STATUS_FLAG` (erreurs matérielles, mot de passe par défaut non changé, etc.) sont décodés d'après la fonction `UIntToStatus` de l'application officielle. Leur position peut varier selon le modèle de boîtier : elle n'a été vérifiée que sur un boîtier 2 zones. Les indicateurs « historique plein » des zones 3 à 5 ne sont pas exposés.
 - Le cycle de déconnexion à 60 secondes peut occasionnellement retarder la remontée d'un état (ex. juste après une pause), sans empêcher le fonctionnement.
   
 ---

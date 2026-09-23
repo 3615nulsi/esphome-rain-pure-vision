@@ -1,0 +1,8 @@
+# Secrets locaux (WiFi, clé API)
+secrets.yaml
+
+# Fichiers générés par ESPHome
+.esphome/
+
+# macOS
+.DS_Store
