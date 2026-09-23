@@ -55,7 +55,7 @@ Toutes ces entités sont exposées nativement à Home Assistant via l'intégrati
 
 ## 🧰 Prérequis matériel
 
-- Un **ESP32 générique** (n'importe quelle carte de dev basique convient)
+- Un **ESP32** (n'importe quelle carte de dev basique convient), dédié ou déjà utilisé par un autre appareil ESPHome
 - Un boîtier **Rain Pure Vision 2.0, version 2 zones**
 - [ESPHome](https://esphome.io/) (dernière version recommandée, framework `esp-idf`)
 - Home Assistant, si vous voulez exploiter les entités (pas strictement obligatoire — l'API ESPHome fonctionne aussi seule)
@@ -64,7 +64,35 @@ Toutes ces entités sont exposées nativement à Home Assistant via l'intégrati
 
 ## 🚀 Installation
 
-1. **Récupérez l'adresse MAC BLE de votre boîtier.** Vous pouvez la trouver avec une appli de scan BLE (nRF Connect, LightBlue...) en cherchant l'appareil correspondant à votre Rain Pure Vision, ou en laissant ESPHome logguer les appareils détectés à proximité.
+Toute la logique est dans le fichier **`rain_pure_vision.yaml`**, un [package ESPHome](https://esphome.io/components/packages/) que votre appareil télécharge directement depuis ce dépôt GitHub à chaque compilation. Deux façons de l'utiliser :
+
+### Option A — Ajouter le Rain Pure Vision à un appareil ESPHome existant
+
+Si vous avez déjà un ESP32 sous ESPHome (capteur, proxy Bluetooth...), ajoutez simplement ces lignes à sa configuration :
+
+```yaml
+substitutions:
+  rain_mac: "AA:BB:CC:DD:EE:FF"   # adresse MAC BLE de votre boîtier
+  rain_timezone: "Europe/Paris"   # facultatif (valeur par défaut)
+  rain_zones: "2"                 # facultatif (valeur par défaut)
+
+packages:
+  rain_pure_vision:
+    url: https://github.com/3615nulsi/esphome-rain-pure-vision
+    ref: main
+    files: [rain_pure_vision.yaml]
+    refresh: 1d
+```
+
+Points d'attention :
+- L'appareil doit être un **ESP32** avec le Bluetooth (pas d'ESP8266). Le framework `esp-idf` est recommandé : BLE + Wi-Fi sont gourmands en mémoire, surtout sur un appareil déjà chargé.
+- Si l'appareil est aussi un **proxy Bluetooth** (`bluetooth_proxy:`), le boîtier occupe un emplacement de connexion BLE supplémentaire. ESPHome affiche alors un avertissement : ajoutez `max_connections: 4` sous `esp32_ble:`.
+- Le package ajoute sa propre horloge SNTP (utilisée pour régler l'heure du boîtier), même si l'appareil a déjà `time: homeassistant` : les deux cohabitent sans problème.
+- Les entités apparaîtront dans Home Assistant sous le nom de cet appareil.
+
+### Option B — Un ESP32 dédié
+
+1. Partez du fichier d'exemple **`proxy_rain_vision_pure.yml`** (il contient déjà le bloc `packages:` ci-dessus).
 
 2. **Créez un fichier `secrets.yaml`** à côté du fichier YAML, avec :
    ```yaml
@@ -75,13 +103,19 @@ Toutes ces entités sont exposées nativement à Home Assistant via l'intégrati
    ```
    Pour générer une clé de chiffrement API valide (32 octets encodés en base64), vous pouvez utiliser la commande `esphome secrets` de la CLI ESPHome, ou simplement demander au dashboard ESPHome de la générer automatiquement lors de la création d'un nouvel appareil.
 
-3. **Modifiez l'adresse MAC** dans le bloc `ble_client:` du fichier YAML pour qu'elle corresponde à votre boîtier.
+3. **Renseignez `rain_mac`** (et si besoin `rain_timezone`) dans le bloc `substitutions:`.
 
-4. **Adaptez le nombre de zones** si nécessaire : `max_value: 2` sous `number: Zone à arroser` correspond à un boîtier 2 zones. Un boîtier avec plus de zones n'a pas été testé — voir la section Limitations.
+### Dans les deux cas
 
-5. **Flashez** votre ESP32 via ESPHome (CLI, dashboard, ou VS Code + extension ESPHome).
+- **Adresse MAC du boîtier** : vous pouvez la trouver avec une appli de scan BLE (nRF Connect, LightBlue...) en cherchant l'appareil correspondant à votre Rain Pure Vision, ou en laissant ESPHome logguer les appareils détectés à proximité.
+- **Nombre de zones** : `rain_zones: "2"` correspond à un boîtier 2 zones. Un boîtier avec plus de zones n'a pas été testé — voir la section Limitations.
+- **Flashez** votre ESP32 via ESPHome (CLI, dashboard, ou VS Code + extension ESPHome), puis ajoutez l'appareil dans Home Assistant via l'intégration ESPHome (découverte automatique normalement, sinon ajout manuel par IP).
 
-6. Ajoutez l'appareil dans Home Assistant via l'intégration ESPHome (découverte automatique normalement, sinon ajout manuel par IP).
+### Mises à jour
+
+Le package est re-téléchargé à la compilation, au plus une fois par jour (`refresh: 1d`) : recompiler l'appareil (par exemple lors d'une mise à jour d'ESPHome) récupère donc automatiquement la dernière version. Avec `ref: main`, vous suivez la version en cours de développement. Pour un arrosage, vous préférerez peut-être figer une version publiée (`ref: v1.0.0` par exemple, voir les *Releases* du dépôt) et la changer quand vous le décidez.
+
+> **Vous utilisiez l'ancien fichier complet ?** Remplacez-le par le nouveau `proxy_rain_vision_pure.yml` en gardant le même nom d'appareil (`proxy-arrosage`) : les noms des entités n'ont pas changé, Home Assistant et le blueprint continueront de fonctionner sans modification.
 
 ---
 
