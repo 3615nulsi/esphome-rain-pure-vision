@@ -125,7 +125,7 @@ Les entités sont nommées en français par défaut. Pour des noms en anglais, a
 
 ### Mises à jour
 
-Le package est re-téléchargé à la compilation, au plus une fois par jour (`refresh: 1d`). Avec `ref: main`, chaque recompilation récupère la dernière version. Pour choisir le moment des mises à jour, figez une version publiée (ex. `ref: v1.1.0`, voir les [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
+Le package est re-téléchargé à la compilation, au plus une fois par jour (`refresh: 1d`). Avec `ref: main`, chaque recompilation récupère la dernière version. Pour choisir le moment des mises à jour, figez une version publiée (ex. `ref: v1.2.0`, voir les [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
 
 ---
 

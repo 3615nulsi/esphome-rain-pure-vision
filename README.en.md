@@ -125,7 +125,7 @@ Entities are named in French by default. For English names, add `langues/en.yaml
 
 ### Updates
 
-The package is downloaded again at compile time, at most once a day (`refresh: 1d`). With `ref: main`, every recompile picks up the latest version. To choose when you update, pin a published release (e.g. `ref: v1.1.0`, see the [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
+The package is downloaded again at compile time, at most once a day (`refresh: 1d`). With `ref: main`, every recompile picks up the latest version. To choose when you update, pin a published release (e.g. `ref: v1.2.0`, see the [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
 
 ---
 
