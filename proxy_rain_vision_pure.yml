@@ -23,7 +23,7 @@ substitutions:
 packages:
   rain_pure_vision:
     url: https://github.com/3615nulsi/esphome-rain-pure-vision
-    ref: main # ou un tag de version (ex. v1.0.0) pour ne pas suivre main
+    ref: main # ou un tag de version (ex. v1.2.0) pour ne pas suivre main
     files: [rain_pure_vision.yaml] # + langues/en.yaml pour des noms d'entités en anglais
     refresh: 1d
 
