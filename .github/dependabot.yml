@@ -1,0 +1,15 @@
+# Mises à jour automatiques des actions GitHub utilisées par la CI
+# (actions/checkout, actions/setup-python, actions/cache).
+# ESPHome n'est pas concerné : la CI installe toujours sa dernière version.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Une seule PR regroupant toutes les mises à jour d'actions.
+    groups:
+      actions-github:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"
