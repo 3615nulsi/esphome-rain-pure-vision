@@ -1,0 +1,59 @@
+# Noms anglais des entités du package Rain Pure Vision.
+# English entity names for the Rain Pure Vision package.
+#
+# À ajouter APRÈS rain_pure_vision.yaml dans la liste files: du package
+# (le dernier fichier l'emporte) :
+# Add it AFTER rain_pure_vision.yaml in the package's files: list
+# (the last file wins):
+#
+#   packages:
+#     rain_pure_vision:
+#       url: https://github.com/3615nulsi/esphome-rain-pure-vision
+#       ref: main
+#       files: [rain_pure_vision.yaml, langues/en.yaml]
+#       refresh: 1d
+#
+# ⚠️ Choisir la langue dès l'installation : Home Assistant identifie les
+# entités par leur nom, changer de langue plus tard crée de nouvelles
+# entités (les anciennes deviennent indisponibles).
+# ⚠️ Pick the language at install time: Home Assistant identifies entities
+# by their name, switching language later creates new entities (the old
+# ones become unavailable).
+#
+# Ne pas renommer ces valeurs après publication (même raison).
+# Do not change these values once published (same reason).
+
+substitutions:
+  rain_nom_zone_manuelle: "Zone to water"
+  rain_nom_duree_arrosage: "Manual watering duration"
+  rain_nom_duree_pause: "Pause duration"
+  rain_nom_fsm: "FSM state"
+  rain_nom_batterie: "Rain Vision battery"
+  rain_nom_offperiods: "OFFPERIODS size"
+  rain_nom_zone_active: "Zone being watered"
+  rain_nom_temps_restant: "Time remaining (current zone)"
+  rain_nom_nb_programmes: "Stored programs"
+  rain_nom_sondes_acqua: "ACQUA sensors detected"
+  rain_nom_vanne: "Valve state"
+  rain_nom_pluie: "Rain sensor active"
+  rain_nom_pompe: "Pump active"
+  rain_nom_defaut_ouvert: "Valve fault (open circuit)"
+  rain_nom_defaut_courtcircuit: "Valve fault (short circuit)"
+  rain_nom_defaut_ouvert_z1: "Open circuit fault - Zone 1"
+  rain_nom_defaut_ouvert_z2: "Open circuit fault - Zone 2"
+  rain_nom_defaut_courtcircuit_z1: "Short circuit fault - Zone 1"
+  rain_nom_defaut_courtcircuit_z2: "Short circuit fault - Zone 2"
+  rain_nom_mdp_defaut: "Default password"
+  rain_nom_erreur_fw: "Firmware error (FW)"
+  rain_nom_erreur_hw: "Hardware error (HW)"
+  rain_nom_charge_batterie: "Battery charging"
+  rain_nom_buffer_z1: "History buffer full - Zone 1"
+  rain_nom_buffer_z2: "History buffer full - Zone 2"
+  rain_nom_pause_active: "Pause active (confirmed by controller)"
+  rain_nom_connexion_ble: "BLE connection to controller"
+  rain_nom_fermer_vanne: "Close valve"
+  rain_nom_arrosage_manuel: "Manual watering"
+  rain_nom_pause: "Pause"
+  rain_nom_annuler_pause: "Cancel pause"
+  rain_nom_sync_heure: "Sync controller clock"
+  rain_unite_jours: "d" # unit of "Pause duration"

@@ -29,6 +29,46 @@ substitutions:
   rain_timezone: "Europe/Paris"
   rain_zones: "2" # borne max de "Zone à arroser"
 
+  # Noms des entités (français par défaut). ATTENTION : Home Assistant
+  # identifie chaque entité par son nom exact (unique_id = MAC de l'ESP32 +
+  # domaine + nom). Changer un nom crée une NOUVELLE entité et casse les
+  # automatisations, tableaux de bord et le blueprint qui utilisaient
+  # l'ancienne. Ces valeurs ne doivent donc plus jamais changer ; pour une
+  # autre langue, ajouter un fichier langues/xx.yaml (voir langues/en.yaml).
+  rain_nom_zone_manuelle: "Zone à arroser"
+  rain_nom_duree_arrosage: "Durée arrosage manuel"
+  rain_nom_duree_pause: "Durée de la pause"
+  rain_nom_fsm: "FSM state"
+  rain_nom_batterie: "Batterie Rain Vision"
+  rain_nom_offperiods: "OFFPERIODS taille"
+  rain_nom_zone_active: "Zone en cours d'arrosage"
+  rain_nom_temps_restant: "Temps restant (zone en cours)"
+  rain_nom_nb_programmes: "Programmes enregistrés"
+  rain_nom_sondes_acqua: "Sondes ACQUA détectées"
+  rain_nom_vanne: "État de la vanne"
+  rain_nom_pluie: "Capteur de pluie détecté"
+  rain_nom_pompe: "Pompe active"
+  rain_nom_defaut_ouvert: "Défaut vanne (circuit ouvert)"
+  rain_nom_defaut_courtcircuit: "Défaut vanne (court-circuit)"
+  rain_nom_defaut_ouvert_z1: "Défaut ouvert - Zone 1"
+  rain_nom_defaut_ouvert_z2: "Défaut ouvert - Zone 2"
+  rain_nom_defaut_courtcircuit_z1: "Défaut court-circuit - Zone 1"
+  rain_nom_defaut_courtcircuit_z2: "Défaut court-circuit - Zone 2"
+  rain_nom_mdp_defaut: "Mot de passe par défaut"
+  rain_nom_erreur_fw: "Erreur logicielle (FW)"
+  rain_nom_erreur_hw: "Erreur matérielle (HW)"
+  rain_nom_charge_batterie: "Charge de la batterie en cours"
+  rain_nom_buffer_z1: "Buffer historique plein - Zone 1"
+  rain_nom_buffer_z2: "Buffer historique plein - Zone 2"
+  rain_nom_pause_active: "Pause active (confirmée par le boîtier)"
+  rain_nom_connexion_ble: "Connexion BLE au boîtier"
+  rain_nom_fermer_vanne: "Fermer la vanne"
+  rain_nom_arrosage_manuel: "Arrosage manuel"
+  rain_nom_pause: "Pause"
+  rain_nom_annuler_pause: "Annuler la pause"
+  rain_nom_sync_heure: "Synchroniser l'heure du boîtier"
+  rain_unite_jours: "j" # unité de "Durée de la pause"
+
 esp32_ble:
   io_capability: none
 
@@ -362,7 +402,7 @@ script:
 
 number:
   - platform: template
-    name: "Zone à arroser"
+    name: "${rain_nom_zone_manuelle}"
     id: rain_zone_manuelle
     icon: "mdi:sprinkler-variant"
     entity_category: config
@@ -373,7 +413,7 @@ number:
     optimistic: true
 
   - platform: template
-    name: "Durée arrosage manuel"
+    name: "${rain_nom_duree_arrosage}"
     id: rain_duree_arrosage
     icon: "mdi:timer-outline"
     entity_category: config
@@ -385,11 +425,11 @@ number:
     optimistic: true
 
   - platform: template
-    name: "Durée de la pause"
+    name: "${rain_nom_duree_pause}"
     id: rain_duree_pause
     icon: "mdi:calendar-clock"
     entity_category: config
-    unit_of_measurement: "j"
+    unit_of_measurement: "${rain_unite_jours}"
     min_value: 1
     max_value: 14
     step: 1
@@ -404,7 +444,7 @@ sensor:
     type: characteristic
     ble_client_id: rain_pure_vision
     id: rain_status_raw
-    name: "FSM state"
+    name: "${rain_nom_fsm}"
     icon: "mdi:state-machine"
     entity_category: diagnostic
     accuracy_decimals: 0
@@ -481,7 +521,7 @@ sensor:
   - platform: ble_client
     type: characteristic
     ble_client_id: rain_pure_vision
-    name: "Batterie Rain Vision"
+    name: "${rain_nom_batterie}"
     service_uuid: '180F'
     characteristic_uuid: '2A19'
     unit_of_measurement: '%'
@@ -497,7 +537,7 @@ sensor:
     type: characteristic
     ble_client_id: rain_pure_vision
     id: rain_offperiods_raw_sensor
-    name: "OFFPERIODS taille"
+    name: "${rain_nom_offperiods}"
     entity_category: diagnostic
     accuracy_decimals: 0
     service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
@@ -521,12 +561,12 @@ sensor:
       return x.size();
 
   - platform: template
-    name: "Zone en cours d'arrosage"
+    name: "${rain_nom_zone_active}"
     id: rain_sens_zone_active
     icon: "mdi:sprinkler-variant"
 
   - platform: template
-    name: "Temps restant (zone en cours)"
+    name: "${rain_nom_temps_restant}"
     id: rain_sens_temps_restant
     icon: "mdi:timer-sand"
     unit_of_measurement: "s"
@@ -536,14 +576,14 @@ sensor:
   # d'arrosages mais le nombre de programmes (iCycles) stockés dans le
   # boîtier, actifs ou désactivés (NUMBER_OF_ICYCLES dans l'app).
   - platform: template
-    name: "Programmes enregistrés"
+    name: "${rain_nom_nb_programmes}"
     id: rain_sens_nb_programmes
     icon: "mdi:calendar-multiple"
     entity_category: diagnostic
     accuracy_decimals: 0
 
   - platform: template
-    name: "Sondes ACQUA détectées"
+    name: "${rain_nom_sondes_acqua}"
     id: rain_sens_acquasensors
     icon: "mdi:water-thermometer-outline"
     entity_category: diagnostic
@@ -551,100 +591,100 @@ sensor:
 
 binary_sensor:
   - platform: template
-    name: "État de la vanne"
+    name: "${rain_nom_vanne}"
     id: rain_binsens_vanne
     icon: "mdi:water-pump"
 
   - platform: template
-    name: "Capteur de pluie détecté"
+    name: "${rain_nom_pluie}"
     id: rain_binsens_pluie
     device_class: moisture
 
   - platform: template
-    name: "Pompe active"
+    name: "${rain_nom_pompe}"
     id: rain_binsens_pompe
     icon: "mdi:pump"
 
   - platform: template
-    name: "Défaut vanne (circuit ouvert)"
+    name: "${rain_nom_defaut_ouvert}"
     id: rain_binsens_defaut_ouvert
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Défaut vanne (court-circuit)"
+    name: "${rain_nom_defaut_courtcircuit}"
     id: rain_binsens_defaut_courtcircuit
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Défaut ouvert - Zone 1"
+    name: "${rain_nom_defaut_ouvert_z1}"
     id: rain_binsens_defaut_ouvert_z1
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Défaut ouvert - Zone 2"
+    name: "${rain_nom_defaut_ouvert_z2}"
     id: rain_binsens_defaut_ouvert_z2
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Défaut court-circuit - Zone 1"
+    name: "${rain_nom_defaut_courtcircuit_z1}"
     id: rain_binsens_defaut_courtcircuit_z1
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Défaut court-circuit - Zone 2"
+    name: "${rain_nom_defaut_courtcircuit_z2}"
     id: rain_binsens_defaut_courtcircuit_z2
     device_class: problem
     entity_category: diagnostic
 
   # STATUS_FLAG (x[0..1] de STATUS) : jamais décodé avant ce patch.
   - platform: template
-    name: "Mot de passe par défaut"
+    name: "${rain_nom_mdp_defaut}"
     id: rain_binsens_mdp_defaut
     icon: "mdi:lock-alert-outline"
     entity_category: diagnostic
 
   - platform: template
-    name: "Erreur logicielle (FW)"
+    name: "${rain_nom_erreur_fw}"
     id: rain_binsens_erreur_fw
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Erreur matérielle (HW)"
+    name: "${rain_nom_erreur_hw}"
     id: rain_binsens_erreur_hw
     device_class: problem
     entity_category: diagnostic
 
   - platform: template
-    name: "Charge de la batterie en cours"
+    name: "${rain_nom_charge_batterie}"
     id: rain_binsens_charge_batterie
     device_class: battery_charging
     entity_category: diagnostic
 
   - platform: template
-    name: "Buffer historique plein - Zone 1"
+    name: "${rain_nom_buffer_z1}"
     id: rain_binsens_buffer_zone1_plein
     icon: "mdi:database-alert-outline"
     entity_category: diagnostic
 
   - platform: template
-    name: "Buffer historique plein - Zone 2"
+    name: "${rain_nom_buffer_z2}"
     id: rain_binsens_buffer_zone2_plein
     icon: "mdi:database-alert-outline"
     entity_category: diagnostic
 
   - platform: template
-    name: "Pause active (confirmée par le boîtier)"
+    name: "${rain_nom_pause_active}"
     id: rain_binsens_pause_active
     icon: "mdi:pause-circle"
 
   - platform: template
-    name: "Connexion BLE au boîtier"
+    name: "${rain_nom_connexion_ble}"
     id: rain_ble_connecte
     device_class: connectivity
     entity_category: diagnostic
@@ -654,27 +694,27 @@ button:
   # Les séquences, la vérification et les nouvelles tentatives sont dans
   # les scripts rain_fermeture_vanne / rain_arrosage_manuel.
   - platform: template
-    name: "Fermer la vanne"
+    name: "${rain_nom_fermer_vanne}"
     on_press:
       - script.execute: rain_fermeture_vanne
 
   - platform: template
-    name: "Arrosage manuel"
+    name: "${rain_nom_arrosage_manuel}"
     on_press:
       - script.execute: rain_arrosage_manuel
 
   - platform: template
-    name: "Pause"
+    name: "${rain_nom_pause}"
     on_press:
       - script.execute: rain_do_pause
 
   - platform: template
-    name: "Annuler la pause"
+    name: "${rain_nom_annuler_pause}"
     on_press:
       - script.execute: rain_do_unpause
 
   - platform: template
-    name: "Synchroniser l'heure du boîtier"
+    name: "${rain_nom_sync_heure}"
     entity_category: config
     on_press:
       - script.execute: rain_sync_device_time

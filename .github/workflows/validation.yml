@@ -74,12 +74,30 @@ jobs:
             - platform: homeassistant
               id: ha_time
           EOF
+          # Variante anglaise : fichier de langue ajouté après le package.
+          sed 's#^  rain_pure_vision: !include ../rain_pure_vision.yaml$#&\n  rain_langue: !include ../langues/en.yaml#' \
+            ci-build/existant.yaml > ci-build/anglais.yaml
+          grep -q "langues/en.yaml" ci-build/anglais.yaml
 
       - name: Valider l'exemple autonome
         run: esphome config ci-build/dedie.yaml
 
       - name: Valider l'intégration dans un appareil existant
         run: esphome config ci-build/existant.yaml
+
+      # Les noms par défaut doivent rester en français (sinon Home Assistant
+      # recrée les entités des installations existantes), et le fichier de
+      # langue doit bien les remplacer.
+      - name: Vérifier les noms des entités (français par défaut, anglais en option)
+        run: |
+          esphome config ci-build/existant.yaml > ci-build/fr.txt
+          esphome config ci-build/anglais.yaml > ci-build/en.txt
+          grep -q 'name: Zone à arroser' ci-build/fr.txt
+          grep -q 'name: Fermer la vanne' ci-build/fr.txt
+          grep -q 'name: Zone to water' ci-build/en.txt
+          grep -q 'name: Close valve' ci-build/en.txt
+          ! grep -q 'name: Fermer la vanne' ci-build/en.txt
+          ! grep -q 'rain_nom_' <(grep ' name: ' ci-build/fr.txt ci-build/en.txt)
 
       - uses: actions/cache@v4
         with:

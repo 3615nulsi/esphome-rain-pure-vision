@@ -113,6 +113,16 @@ packages:
 - **MAC address**: find it with a BLE scanning app (nRF Connect, LightBlue…) or in the ESPHome logs.
 - **Flash** the ESP32, then add it to Home Assistant via the ESPHome integration (usually auto-discovered).
 
+### English entity names
+
+Entities are named in French by default. For English names, add `langues/en.yaml` **after** the package in `files:`:
+
+```yaml
+    files: [rain_pure_vision.yaml, langues/en.yaml]
+```
+
+⚠️ Pick the language **at install time**: Home Assistant identifies entities by their name, so switching language later creates new entities (the old ones become unavailable and automations using them must be redone). A single name can also be overridden in the device's `substitutions:` (`rain_nom_…` keys, see the top of `rain_pure_vision.yaml`). The blueprint works whatever the entity language, but its texts and notifications remain in French.
+
 ### Updates
 
 The package is downloaded again at compile time, at most once a day (`refresh: 1d`). With `ref: main`, every recompile picks up the latest version. To choose when you update, pin a published release (e.g. `ref: v1.1.0`, see the [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
