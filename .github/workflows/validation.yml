@@ -125,5 +125,5 @@ jobs:
       - name: Installer les dépendances
         run: pip install pyyaml jinja2
 
-      - name: Vérifier le blueprint
+      - name: Vérifier les blueprints (FR + EN)
         run: python .github/scripts/verifier_blueprint.py
