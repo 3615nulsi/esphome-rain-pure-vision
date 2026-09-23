@@ -1,4 +1,4 @@
-# Arrosage programmé (Rain Pure Vision) V5.5
+# Arrosage programmé (Rain Pure Vision) V5.6
 # Base V5.1 + P0/P1 (restart, from, re-check BLE, durée, stop BLE)
 # V5.5 : entrée facultative « État de la vanne » → ouverture confirmée
 # (sinon alerte) et fin d'arrosage réelle (sinon fermeture forcée).

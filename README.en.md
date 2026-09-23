@@ -1,75 +1,81 @@
 🇫🇷 [Version française](README.md)
 
-# 🌱 ESPHome Proxy for Rain Pure Vision 2.0 Irrigation Controller (2 zones)
+# 🌱 ESPHome Proxy for Rain Pure Vision 2.0 (2 zones)
 
-Unofficial [ESPHome](https://esphome.io/) / [Home Assistant](https://www.home-assistant.io/) integration for the **Rain Pure Vision 2.0 (2-zone)** irrigation controller, controlled over Bluetooth LE (BLE).
+Unofficial [ESPHome](https://esphome.io/) / [Home Assistant](https://www.home-assistant.io/) integration for the **Rain Pure Vision 2.0 (2-zone)** irrigation controller, controlled over Bluetooth Low Energy (BLE).
 
-An ESP32 acts as a **proxy**: it maintains the BLE connection to the controller and exposes all the useful functions to Home Assistant through the native ESPHome API (WiFi).
-
----
-
-## ⚠️ Important disclaimer — please read before using
-
-**I am not a developer and I don't know how to code.** This project came out of a personal need (my Rain Pure Vision controller had no available integration) and was built with the help of several tools and iterative testing.
-
-Concretely, this means:
-- The code works **on my own setup**, tested and validated after several rounds of debugging, but it probably doesn't have the rigor, robustness, or elegance a professional developer would have produced.
-- I'm not able to explain or justify every line of code in depth — I can vouch for what was observed and tested, not guarantee the correctness of every implementation detail.
-- The controller's BLE protocol is **not officially documented**: everything described here comes from analyzing the decompiled JavaScript code of the official app, complemented by empirical testing.
-
-**If you're a developer and you spot bugs, rough edges, or cleaner ways of doing things (better error handling, YAML structuring, BLE connection reliability, etc.), your help is genuinely welcome.**
+An ESP32 acts as a **proxy**: it talks to the controller over BLE and exposes its functions to Home Assistant through the native ESPHome API (Wi-Fi). A Home Assistant **blueprint** is provided to schedule watering.
 
 ---
 
-## ⚡ Important note: exclusive BLE connection
+## ⚠️ Disclaimer
 
-**When the ESP32 is connected to the controller over BLE, the controller is no longer accessible via the official Rain Pure Vision app.** The controller only allows a single BLE connection at a time. You may therefore temporarily lose access from the official app while the proxy is connected.
+**I am not a developer.** This project answers a personal need and was built with the help of AI assistants, from a reverse-engineering of the official Rain Vision app.
 
-**This is precisely why a Home Assistant blueprint is provided**: scheduling and managing watering programs is much more convenient via Home Assistant and the ESPHome proxy than via the official application, and the blueprint helps avoid conflicts between the two control paths.
+- It works **on my setup**, but lacks the rigor of a professional project.
+- The controller's BLE protocol is **not documented**: everything comes from analyzing the official app's code and testing on a single controller.
+
+Feedback and contributions are welcome (see [Contributing](#-contributing)).
 
 ---
 
-## 🔧 Features
+## ⚡ Exclusive BLE connection
+
+The controller accepts **only one BLE connection at a time**: while the ESP32 is connected, the official app cannot connect. To use the app, unplug the ESP32; the proxy reconnects on its own when restarted.
+
+---
+
+## 🔧 Proxy features
 
 | Feature | Details |
 |---|---|
-| **Manual watering** | Start a cycle on the zone and duration of your choice (1 to 60 min). The proxy waits for the BLE connection, **checks that the valve actually opened** on the right zone and retries otherwise (3 attempts) |
-| **Close valve immediately** | General "stop" button, all zones, with the same check and retries |
-| **Scheduled pause** | Suspends automatic programs for an adjustable duration (1 to 14 days), with **real confirmation** that the controller actually registered the pause (not just an optimistic local state) |
-| **Cancel pause** | Re-enables automatic programs |
-| **Valve state** (open/closed) | Derived from the real state of active zones |
-| **Currently watering zone** | Number of the active zone during a cycle |
-| **Time remaining** | Time remaining on the current cycle (in seconds) |
-| **Rain sensor** | State of the controller's rain sensor, if fitted |
-| **Pump active** | Detects pump activation (if applicable) |
-| **Valve faults** | Detects open-circuit / short-circuit faults on the solenoid valves, overall and per zone |
-| **Controller status flags** | Default password not changed, firmware (FW) error, hardware (HW) error, battery charging, watering history full (zones 1 and 2) |
-| **Stored programs** | Number of programs stored in the controller, active or disabled (replaces the former "Cycles d'arrosage" sensor, which was not a watering counter) |
-| **ACQUA sensors** | Number of ACQUA sensors detected by the controller (255 = value not refreshed yet) |
-| **Battery** | Controller's battery level |
-| **BLE connection** | Binary sensor showing real-time connection status |
-| **Time sync** | The controller's clock is automatically resynced on every connection and every NTP sync |
-
-All these entities are natively exposed to Home Assistant through the ESPHome integration — no extra configuration needed on the HA side.
+| **Manual watering** | Zone and duration of your choice (1 to 60 min). The proxy waits for the BLE connection, **checks that the valve actually opened** on the right zone and retries otherwise (3 attempts) |
+| **Close valve** | General "stop" button, with the same check |
+| **Pause** | Suspends the programs stored in the controller (1 to 14 days), with **confirmation** read back from the controller |
+| **Cancel pause** | Re-enables the controller's programs |
+| **Valve state** | Open / closed, based on the zones actually active |
+| **Current zone / time remaining** | Zone being watered and time remaining (in seconds) |
+| **Rain sensor** | The controller's rain sensor, if fitted |
+| **Pump active** | If applicable |
+| **Solenoid valve faults** | Open circuit / short circuit, overall and per zone |
+| **Controller flags** | Default password, firmware (FW) error, hardware (HW) error, battery charging, history full (zones 1 and 2) |
+| **Stored programs** | Number of programs stored in the controller, active or disabled |
+| **ACQUA sensors** | Number of sensors detected (255 = not refreshed yet) |
+| **Battery** | Controller battery level |
+| **BLE connection** | Connection state to the controller |
+| **Clock** | Controller clock resynchronized on every connection and every NTP sync |
 
 ---
 
-## 🧰 Hardware requirements
+## 🗓️ Scheduling blueprint
 
-- An **ESP32** board (any basic dev board works), either dedicated or already used by another ESPHome device
+`blueprint_programmation_rain_pure_vision_esphome.yaml` is a Home Assistant automation blueprint (HA ≥ 2024.10). Import it via **Settings → Automations & scenes → Blueprints → Import blueprint**, using the file's GitHub URL.
+
+- Waters one zone during the time slots of a schedule (Home Assistant *Schedule* helper), closes the valve at the end of the slot.
+- Duration adjusted by a seasonal coefficient (`input_number` in %).
+- Watering skipped on: electrical fault, controller pause, rain sensor active, **recent rainfall** (accumulation sensor, e.g. a 48 h *Statistics* helper), **forecast rain** over the next hours, soil moist enough.
+- Waits for Bluetooth if the controller is temporarily unreachable.
+- Opening and closing **verified** against the actual valve state, forced closing if it stays open too long.
+- Notifications (start, skip with reason, end, anomalies) via `notify.send_message`.
+
+---
+
+## 🧰 Requirements
+
+- An **ESP32** with Bluetooth (no ESP8266), dedicated or already used by another ESPHome device
 - A **Rain Pure Vision 2.0, 2-zone** controller
-- [ESPHome](https://esphome.io/) (latest version recommended, `esp-idf` framework)
-- Home Assistant, if you want to use the entities (not strictly required — the ESPHome API also works standalone)
+- [ESPHome](https://esphome.io/), `esp-idf` framework recommended
+- Home Assistant (optional for the proxy alone, required for the blueprint)
 
 ---
 
 ## 🚀 Installation
 
-All the logic lives in **`rain_pure_vision.yaml`**, an [ESPHome package](https://esphome.io/components/packages/) that your device downloads straight from this GitHub repository on every compile. Two ways to use it:
+All the logic lives in **`rain_pure_vision.yaml`**, an [ESPHome package](https://esphome.io/components/packages/) downloaded from this repository at compile time.
 
-### Option A — Add the Rain Pure Vision to an existing ESPHome device
+### Option A — Existing ESPHome device
 
-If you already have an ESP32 running ESPHome (sensor, Bluetooth proxy...), just add these lines to its configuration:
+Add to its configuration:
 
 ```yaml
 substitutions:
@@ -85,81 +91,68 @@ packages:
     refresh: 1d
 ```
 
-Things to keep in mind:
-- The device must be an **ESP32** with Bluetooth (no ESP8266). The `esp-idf` framework is recommended: BLE + Wi-Fi use a lot of memory, especially on an already busy device.
-- If the device is also a **Bluetooth proxy** (`bluetooth_proxy:`), the controller uses one extra BLE connection slot. ESPHome will then show a warning: add `max_connections: 4` under `esp32_ble:`.
-- The package adds its own SNTP clock (used to set the controller's time), even if the device already has `time: homeassistant`: both coexist without any problem.
-- The entities will show up in Home Assistant under that device's name.
+- If the device is also a **Bluetooth proxy** (`bluetooth_proxy:`), add `max_connections: 4` under `esp32_ble:` (ESPHome flags it with a warning).
+- The package adds its own SNTP clock; it coexists fine with `time: homeassistant`.
+- The entities show up in Home Assistant under that device's name.
 
-### Option B — A dedicated ESP32
+### Option B — Dedicated ESP32
 
-1. Start from the example file **`proxy_rain_vision_pure.yml`** (it already contains the `packages:` block above).
-
-2. **Create a `secrets.yaml` file** next to the YAML file, with:
+1. Start from the example **`proxy_rain_vision_pure.yml`** (it already contains the `packages:` block).
+2. Create a **`secrets.yaml`** next to it:
    ```yaml
    wifi_ssid: "YourSSID"
    wifi_password: "YourPassword"
    ap_fallback_password: "a_fallback_password"
-   api_encryption_key: "generate a new secret key of your own"
+   api_encryption_key: "your key (32 bytes, base64)"
    ```
-   To generate a valid API encryption key (32 bytes, base64-encoded), you can use the ESPHome CLI's `esphome secrets` command, or simply let the ESPHome dashboard generate one automatically when creating the device.
+   The ESPHome dashboard can generate the API key when creating a device.
+3. Set **`rain_mac`** (and `rain_timezone` if needed).
 
-3. **Set `rain_mac`** (and `rain_timezone` if needed) in the `substitutions:` block.
+### Then
 
-### In both cases
-
-- **Controller MAC address**: you can find it with a BLE scanning app (nRF Connect, LightBlue...) by looking for the device matching your Rain Pure Vision, or by letting ESPHome log the device during a discovery scan.
-- **Number of zones**: `rain_zones: "2"` corresponds to a 2-zone controller. A controller with more zones hasn't been tested — see the Limitations section.
-- **Flash** your ESP32 via ESPHome (CLI, dashboard, or VS Code + ESPHome extension), then add the device to Home Assistant via the ESPHome integration (auto-discovery normally, or manual add by IP otherwise).
+- **MAC address**: find it with a BLE scanning app (nRF Connect, LightBlue…) or in the ESPHome logs.
+- **Flash** the ESP32, then add it to Home Assistant via the ESPHome integration (usually auto-discovered).
 
 ### Updates
 
-The package is downloaded again at compile time, at most once a day (`refresh: 1d`): recompiling the device (for instance when updating ESPHome) automatically picks up the latest version. With `ref: main`, you follow the development version. For an irrigation system, you may prefer to pin a published release (e.g. `ref: v1.0.0`, see the repository's *Releases*) and change it when you decide to.
-
-> **Were you using the old all-in-one file?** Replace it with the new `proxy_rain_vision_pure.yml`, keeping the same device name (`proxy-arrosage`): entity names haven't changed, so Home Assistant and the blueprint will keep working without any change.
+The package is downloaded again at compile time, at most once a day (`refresh: 1d`). With `ref: main`, every recompile picks up the latest version. To choose when you update, pin a published release (e.g. `ref: v1.1.0`, see the [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
 
 ---
 
-## 🔍 How it works (for the curious)
+## 🔍 How it works
 
-Since the Rain Pure Vision's BLE protocol isn't documented, this project relies on reverse-engineering the official app's JavaScript code (decompiled from the Ionic/Capacitor app bundle). A few key observations:
+The protocol was reconstructed from the official app's JavaScript code (Ionic/Capacitor app), then checked on the hardware. A few notable points:
 
-- The controller deliberately limits every BLE session to **~60 seconds** (`DisconnectTimer = 60000` in the app's code) — this is not a bug in the proxy, it's intentional firmware behavior. The proxy copes with that by re-establishing connections as needed.
-- The current cycle's duration field (`CURR_ZONE_LASTING_TIME`) is expressed in **seconds**, not minutes despite what its name suggests — confirmed empirically by comparing the counter's decrease during a run.
-- The clock needs to be periodically rewritten to the controller (`TIME` characteristic) for dated pauses and certain cycles to work correctly.
-- The "manual watering" command frame (`MANUAL`) is 64 bytes long (2 bytes per zone, up to 32 zones), even though the controller only handles 2.
-
----
-
-## 🐞 Known limitations / areas of uncertainty
-
-- **Tested on a single 2-zone Rain Pure Vision controller only.** Behavior on other variants (more zones, other generation) is not guaranteed.
-- The exact UUID for the `TIME` characteristic (`0200F004`) was inferred by analogy with other characteristics in the same service, but couldn't be confirmed line-by-line in the source code (the codebase is minified/obfuscated).
-- The `STATUS_FLAG` bits (hardware errors, default password not changed, etc.) are decoded based on the official app's `UIntToStatus` function. Their position may vary by controller model and has only been checked on a 2-zone controller. The "history full" flags for zones 3 to 5 are not exposed.
-- The 60-second disconnect cycle can occasionally delay a state update (e.g., right after a pause), without preventing normal operation.
+- The official app closes its BLE sessions after **~60 seconds**; the proxy reconnects automatically if the controller drops the connection.
+- The current zone's remaining time (`CURR_ZONE_LASTING_TIME`) is in **seconds**, despite its name — checked with a stopwatch.
+- The clock is written to the controller (`TIME` characteristic) on every connection, so that dated pauses work.
+- The manual watering frame (`MANUAL`) is 64 bytes long (2 per zone, up to 32 zones), even for a 2-zone controller.
 
 ---
 
-## 🙏 Calling all developers
+## 🐞 Limitations
 
-If you know ESPHome, C++, or the BLE protocol, this project clearly needs a professional eye: more robust error handling, YAML simplification, better reconnection handling, support for other controller variants, and general code hygiene improvements.
+- **Tested on a single 2-zone Rain Pure Vision controller.** Behavior on other variants (more zones, other generation) is not guaranteed.
+- The `TIME` characteristic UUID (`0200F004`) is inferred by analogy with the other characteristics of the service; it works, but couldn't be confirmed in the source code.
+- The `STATUS_FLAG` indicators (errors, default password…) are decoded from the official app and were only checked on a 2-zone controller. The "history full" flags for zones 3 to 5 are not exposed.
 
 ---
 
 ## 🤝 Contributing
 
-- **Issues**: describe your problem with as much detail as possible (ESPHome logs at `DEBUG` or `VERBOSE` level, exact controller model, observed vs. expected behavior).
-- **Pull requests**: welcome, big or small. Feel free to propose refactors even if they change the file's structure.
+If you know ESPHome, C++ or BLE, an outside eye is welcome: robustness, simplification, support for other controller variants…
+
+- **Issues**: include ESPHome logs (`DEBUG` level), the exact controller model and observed / expected behavior.
+- **Pull requests**: welcome, big or small, refactors included.
 
 ---
 
 ## 📄 License
 
-This project is published under the [MIT](LICENSE) license — feel free to reuse, modify, and redistribute it.
+[MIT](LICENSE) — free to reuse, modify and redistribute.
 
 ---
 
 ## 🙌 Acknowledgments
 
-- The [ESPHome](https://esphome.io/) and [Home Assistant](https://www.home-assistant.io/) communities
-- This project owes a lot to conversational AI assistance (Claude, Grok) for debugging and writing the code — hence the importance of community review mentioned above
+The [ESPHome](https://esphome.io/) and [Home Assistant](https://www.home-assistant.io/) communities.
