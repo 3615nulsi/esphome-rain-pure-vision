@@ -1,75 +1,81 @@
 🇬🇧 [English version](README.en.md)
 
-# 🌱 Proxy ESPHome pour boîtier d'irrigation Rain Pure Vision 2.0 (2 zones)
+# 🌱 Proxy ESPHome pour Rain Pure Vision 2.0 (2 zones)
 
-Intégration [ESPHome](https://esphome.io/) / [Home Assistant](https://www.home-assistant.io/) non officielle pour le boîtier d'irrigation **Rain Pure Vision 2.0 (2 zones)**, piloté en Bluetooth Low Energy (BLE). Cette intégration n'existait pas jusqu'à présent. Ce dépôt tente de combler ce manque.
+Intégration [ESPHome](https://esphome.io/) / [Home Assistant](https://www.home-assistant.io/) non officielle pour le boîtier d'irrigation **Rain Pure Vision 2.0 (2 zones)**, piloté en Bluetooth Low Energy (BLE).
 
-Un ESP32 fait office de **proxy** : il maintient la connexion BLE avec le boîtier et expose toutes les fonctions utiles côté Home Assistant via l'API native ESPHome (WiFi).
-
----
-
-## ⚠️ Avertissement important — lisez avant d'utiliser
-
-**Je ne suis pas développeur et je ne sais pas coder.** Ce projet est né d'un besoin personnel (mon boîtier Rain Pure Vision n'avait aucune intégration disponible) et a été construit avec l'aide de plusieurs assistants IA (Claude, Grok), à partir d'un travail de rétro-ingénierie de l'application officielle Rain Vision.
-
-Concrètement, cela veut dire :
-- Le code fonctionne **sur mon installation**, testé et validé après plusieurs itérations de débogage, mais il n'a probablement pas la rigueur, la robustesse ou l'élégance qu'un développeur professionnel aurait produites.
-- Je ne suis pas en mesure d'expliquer ou de justifier chaque ligne de code en profondeur — je peux témoigner de ce qui a été observé et testé, pas garantir la justesse de chaque détail d'implémentation.
-- Le protocole BLE du boîtier n'est **pas documenté officiellement** : tout ce qui est décrit ici vient d'une analyse du code JavaScript décompilé de l'application officielle, complétée par des tests empiriques (captures de logs, comparaison de valeurs avec le comportement réel de l'appareil).
-
-**Si vous êtes développeur⋅euse et que vous repérez des erreurs, des approximations, ou des façons plus propres de faire les choses (gestion d'erreurs, structuration du YAML, fiabilité de la connexion BLE, etc.), votre aide est la bienvenue et sincèrement appréciée.** Ouvrez une issue, une pull request, ou dites-moi simplement ce qui cloche — je préfère un projet imparfait mais qui s'améliore avec la communauté qu'un projet figé.
+Un ESP32 sert de **proxy** : il dialogue en BLE avec le boîtier et expose ses fonctions à Home Assistant via l'API native ESPHome (Wi-Fi). Un **blueprint** Home Assistant est fourni pour programmer les arrosages.
 
 ---
 
-## ⚡ Note importante : connexion BLE exclusive
+## ⚠️ Avertissement
 
-**Lorsque l'ESP32 est connecté au boîtier en BLE, celui-ci n'est plus accessible via l'application officielle Rain Pure Vision.** Le boîtier gère une seule connexion BLE à la fois. Vous pouvez rétablir la connexion avec l'app officielle en débranchant simplement l'ESP32 ; la reconnexion du proxy se fera automatiquement au redémarrage de l'ESP.
+**Je ne suis pas développeur.** Ce projet répond à un besoin personnel et a été construit avec l'aide d'assistants IA, à partir d'une rétro-ingénierie de l'application officielle Rain Vision.
 
-**C'est précisément pour cette raison qu'un blueprint Home Assistant est fourni** : la programmation des arrosages est nettement plus pratique via Home Assistant et le proxy ESPHome que via l'application officielle limitée. Ce projet offre ainsi une meilleure expérience utilisateur pour la gestion quotidienne de votre système d'arrosage.
+- Il fonctionne **sur mon installation**, mais n'a pas la rigueur d'un projet professionnel.
+- Le protocole BLE du boîtier n'est **pas documenté** : tout vient de l'analyse du code de l'application officielle et de tests sur un seul boîtier.
+
+Les retours et contributions sont les bienvenus (voir [Contribuer](#-contribuer)).
 
 ---
 
-## 🔧 Fonctionnalités
+## ⚡ Connexion BLE exclusive
+
+Le boîtier n'accepte qu'**une seule connexion BLE à la fois** : tant que l'ESP32 y est connecté, l'application officielle ne peut pas s'y connecter. Pour utiliser l'app, débranchez l'ESP32 ; le proxy se reconnectera tout seul au redémarrage.
+
+---
+
+## 🔧 Fonctionnalités du proxy
 
 | Fonctionnalité | Détail |
 |---|---|
-| **Arrosage manuel** | Démarrage d'un cycle sur la zone et la durée de votre choix (1 à 60 min). Le proxy attend la connexion BLE, **vérifie que la vanne s'est réellement ouverte** sur la bonne zone et réessaie sinon (3 tentatives) |
-| **Fermeture immédiate de la vanne** | Bouton "stop" général, toutes zones, avec la même vérification et les mêmes nouvelles tentatives |
-| **Pause programmée** | Suspend les programmes automatiques pour une durée réglable (1 à 14 jours), avec **vérification réelle** que le boîtier a bien pris en compte la pause |
-| **Annulation de pause** | Réactive les programmes automatiques |
-| **État de la vanne** (ouverte/fermée) | Déduit de l'état réel des zones actives |
-| **Zone en cours d'arrosage** | Numéro de la zone active pendant un cycle |
-| **Temps restant** | Temps restant sur le cycle en cours (en secondes) |
-| **Capteur de pluie** | État du capteur de pluie du boîtier, si équipé |
-| **Pompe active** | Détection d'activation de la pompe (le cas échéant) |
-| **Défauts électrovanne** | Détection de circuit ouvert / court-circuit sur les électrovannes, globalement et zone par zone |
-| **Indicateurs d'état du boîtier** | Mot de passe par défaut non changé, erreur logicielle (FW), erreur matérielle (HW), charge de la batterie en cours, historique d'arrosage plein (zones 1 et 2) |
-| **Programmes enregistrés** | Nombre de programmes stockés dans le boîtier, actifs ou désactivés (remplace l'ancien capteur « Cycles d'arrosage », qui n'était pas un compteur d'arrosages) |
-| **Sondes ACQUA** | Nombre de sondes ACQUA détectées par le boîtier (255 = valeur pas encore rafraîchie) |
+| **Arrosage manuel** | Zone et durée au choix (1 à 60 min). Le proxy attend la connexion BLE, **vérifie que la vanne s'est réellement ouverte** sur la bonne zone et réessaie sinon (3 tentatives) |
+| **Fermeture de la vanne** | Bouton « stop » général, avec la même vérification |
+| **Pause** | Suspend les programmes enregistrés dans le boîtier (1 à 14 jours), avec **confirmation** relue sur le boîtier |
+| **Annulation de pause** | Réactive les programmes du boîtier |
+| **État de la vanne** | Ouverte / fermée, d'après les zones réellement actives |
+| **Zone en cours / temps restant** | Zone qui arrose et temps restant (en secondes) |
+| **Capteur de pluie** | Capteur de pluie du boîtier, si équipé |
+| **Pompe active** | Le cas échéant |
+| **Défauts électrovanne** | Circuit ouvert / court-circuit, globalement et par zone |
+| **Indicateurs du boîtier** | Mot de passe par défaut, erreur logicielle (FW), erreur matérielle (HW), charge de la batterie, historique plein (zones 1 et 2) |
+| **Programmes enregistrés** | Nombre de programmes stockés dans le boîtier, actifs ou désactivés |
+| **Sondes ACQUA** | Nombre de sondes détectées (255 = pas encore rafraîchi) |
 | **Batterie** | Niveau de batterie du boîtier |
-| **Connexion BLE** | Capteur binaire diagnostiquant l'état de la connexion en temps réel |
-| **Synchronisation de l'heure** | L'heure du boîtier est automatiquement resynchronisée à chaque connexion et à chaque synchro NTP |
-
-Toutes ces entités sont exposées nativement à Home Assistant via l'intégration ESPHome — aucune configuration supplémentaire n'est nécessaire côté HA.
+| **Connexion BLE** | État de la connexion au boîtier |
+| **Heure** | Heure du boîtier resynchronisée à chaque connexion et à chaque synchro NTP |
 
 ---
 
-## 🧰 Prérequis matériel
+## 🗓️ Blueprint de programmation
 
-- Un **ESP32** (n'importe quelle carte de dev basique convient), dédié ou déjà utilisé par un autre appareil ESPHome
-- Un boîtier **Rain Pure Vision 2.0, version 2 zones**
-- [ESPHome](https://esphome.io/) (dernière version recommandée, framework `esp-idf`)
-- Home Assistant, si vous voulez exploiter les entités (pas strictement obligatoire — l'API ESPHome fonctionne aussi seule)
+Le fichier `blueprint_programmation_rain_pure_vision_esphome.yaml` est un blueprint d'automatisation Home Assistant (HA ≥ 2024.10). À importer via **Paramètres → Automatisations et scènes → Blueprints → Importer un blueprint**, avec l'URL du fichier sur GitHub.
+
+- Arrosage d'une zone pendant les créneaux d'un planning (entrée *Planning* de Home Assistant), vanne fermée en fin de créneau.
+- Durée ajustée par un coefficient saisonnier (`input_number` en %).
+- Arrosage annulé en cas de : défaut électrique, pause du boîtier, capteur de pluie actif, **pluie tombée récemment** (capteur de cumul, ex. entrée *Statistiques* sur 48 h), **pluie prévue** sur les prochaines heures, sol assez humide.
+- Attente du Bluetooth si le boîtier est momentanément injoignable.
+- Ouverture et fermeture **vérifiées** sur l'état réel de la vanne, fermeture forcée si elle reste ouverte trop longtemps.
+- Notifications (démarrage, annulation avec motif, fin, anomalies) via `notify.send_message`.
+
+---
+
+## 🧰 Prérequis
+
+- Un **ESP32** avec Bluetooth (pas d'ESP8266), dédié ou déjà utilisé par un autre appareil ESPHome
+- Un boîtier **Rain Pure Vision 2.0, 2 zones**
+- [ESPHome](https://esphome.io/), framework `esp-idf` recommandé
+- Home Assistant (facultatif pour le proxy seul, nécessaire pour le blueprint)
 
 ---
 
 ## 🚀 Installation
 
-Toute la logique est dans le fichier **`rain_pure_vision.yaml`**, un [package ESPHome](https://esphome.io/components/packages/) que votre appareil télécharge directement depuis ce dépôt GitHub à chaque compilation. Deux façons de l'utiliser :
+Toute la logique est dans **`rain_pure_vision.yaml`**, un [package ESPHome](https://esphome.io/components/packages/) téléchargé depuis ce dépôt à la compilation.
 
-### Option A — Ajouter le Rain Pure Vision à un appareil ESPHome existant
+### Option A — Appareil ESPHome existant
 
-Si vous avez déjà un ESP32 sous ESPHome (capteur, proxy Bluetooth...), ajoutez simplement ces lignes à sa configuration :
+Ajoutez à sa configuration :
 
 ```yaml
 substitutions:
@@ -85,81 +91,68 @@ packages:
     refresh: 1d
 ```
 
-Points d'attention :
-- L'appareil doit être un **ESP32** avec le Bluetooth (pas d'ESP8266). Le framework `esp-idf` est recommandé : BLE + Wi-Fi sont gourmands en mémoire, surtout sur un appareil déjà chargé.
-- Si l'appareil est aussi un **proxy Bluetooth** (`bluetooth_proxy:`), le boîtier occupe un emplacement de connexion BLE supplémentaire. ESPHome affiche alors un avertissement : ajoutez `max_connections: 4` sous `esp32_ble:`.
-- Le package ajoute sa propre horloge SNTP (utilisée pour régler l'heure du boîtier), même si l'appareil a déjà `time: homeassistant` : les deux cohabitent sans problème.
-- Les entités apparaîtront dans Home Assistant sous le nom de cet appareil.
+- Si l'appareil est aussi un **proxy Bluetooth** (`bluetooth_proxy:`), ajoutez `max_connections: 4` sous `esp32_ble:` (ESPHome le signale par un avertissement).
+- Le package ajoute sa propre horloge SNTP ; elle cohabite sans problème avec `time: homeassistant`.
+- Les entités apparaissent dans Home Assistant sous le nom de cet appareil.
 
-### Option B — Un ESP32 dédié
+### Option B — ESP32 dédié
 
-1. Partez du fichier d'exemple **`proxy_rain_vision_pure.yml`** (il contient déjà le bloc `packages:` ci-dessus).
-
-2. **Créez un fichier `secrets.yaml`** à côté du fichier YAML, avec :
+1. Partez de l'exemple **`proxy_rain_vision_pure.yml`** (il contient déjà le bloc `packages:`).
+2. Créez un **`secrets.yaml`** à côté :
    ```yaml
    wifi_ssid: "VotreSSID"
    wifi_password: "VotreMotDePasse"
    ap_fallback_password: "un_mot_de_passe_de_secours"
-   api_encryption_key: "générer une nouvelle clé secrete qui vous est propre"
+   api_encryption_key: "votre clé (32 octets en base64)"
    ```
-   Pour générer une clé de chiffrement API valide (32 octets encodés en base64), vous pouvez utiliser la commande `esphome secrets` de la CLI ESPHome, ou simplement demander au dashboard ESPHome de la générer automatiquement lors de la création d'un nouvel appareil.
+   Le tableau de bord ESPHome peut générer la clé API à la création d'un appareil.
+3. Renseignez **`rain_mac`** (et si besoin `rain_timezone`).
 
-3. **Renseignez `rain_mac`** (et si besoin `rain_timezone`) dans le bloc `substitutions:`.
+### Ensuite
 
-### Dans les deux cas
-
-- **Adresse MAC du boîtier** : vous pouvez la trouver avec une appli de scan BLE (nRF Connect, LightBlue...) en cherchant l'appareil correspondant à votre Rain Pure Vision, ou en laissant ESPHome logguer les appareils détectés à proximité.
-- **Nombre de zones** : `rain_zones: "2"` correspond à un boîtier 2 zones. Un boîtier avec plus de zones n'a pas été testé — voir la section Limitations.
-- **Flashez** votre ESP32 via ESPHome (CLI, dashboard, ou VS Code + extension ESPHome), puis ajoutez l'appareil dans Home Assistant via l'intégration ESPHome (découverte automatique normalement, sinon ajout manuel par IP).
+- **Adresse MAC** : trouvable avec une appli de scan BLE (nRF Connect, LightBlue…) ou dans les logs ESPHome.
+- **Flashez** l'ESP32, puis ajoutez-le à Home Assistant via l'intégration ESPHome (découverte automatique en général).
 
 ### Mises à jour
 
-Le package est re-téléchargé à la compilation, au plus une fois par jour (`refresh: 1d`) : recompiler l'appareil (par exemple lors d'une mise à jour d'ESPHome) récupère donc automatiquement la dernière version. Avec `ref: main`, vous suivez la version en cours de développement. Pour un arrosage, vous préférerez peut-être figer une version publiée (`ref: v1.0.0` par exemple, voir les *Releases* du dépôt) et la changer quand vous le décidez.
-
-> **Vous utilisiez l'ancien fichier complet ?** Remplacez-le par le nouveau `proxy_rain_vision_pure.yml` en gardant le même nom d'appareil (`proxy-arrosage`) : les noms des entités n'ont pas changé, Home Assistant et le blueprint continueront de fonctionner sans modification.
+Le package est re-téléchargé à la compilation, au plus une fois par jour (`refresh: 1d`). Avec `ref: main`, chaque recompilation récupère la dernière version. Pour choisir le moment des mises à jour, figez une version publiée (ex. `ref: v1.1.0`, voir les [Releases](https://github.com/3615nulsi/esphome-rain-pure-vision/releases)).
 
 ---
 
-## 🔍 Comment ça marche (pour les curieux)
+## 🔍 Comment ça marche
 
-Le protocole BLE du Rain Pure Vision n'étant pas documenté, ce projet s'appuie sur une rétro-ingénierie du code JavaScript de l'application officielle (décompilé depuis le bundle de l'app Ionic/Capacitor). Quelques points clés découverts pendant le développement :
+Le protocole a été reconstitué à partir du code JavaScript de l'application officielle (app Ionic/Capacitor), puis vérifié sur le matériel. Quelques points notables :
 
-- Le boîtier limite volontairement chaque session BLE à **~60 secondes** (`DisconnectTimer = 60000` dans le code de l'app) — ce n'est pas un bug du proxy, c'est un comportement voulu du firmware. Le proxy se reconnecte automatiquement.
-- Le champ de durée du cycle en cours (`CURR_ZONE_LASTING_TIME`) est exprimé en **secondes**, pas en minutes malgré ce que son nom suggère — confirmé empiriquement en comparant la décroissance du compteur à un chronomètre réel sur un cycle programmé.
-- L'heure doit être régulièrement réécrite dans le boîtier (caractéristique `TIME`) pour que les pauses datées et certains cycles fonctionnent correctement.
-- La trame de commande "arrosage manuel" (`MANUAL`) fait 64 octets (2 octets par zone, jusqu'à 32 zones), même si le boîtier n'en gère que 2.
+- L'application officielle coupe ses sessions BLE au bout de **~60 secondes** ; le proxy se reconnecte automatiquement si le boîtier coupe la connexion.
+- Le temps restant de la zone en cours (`CURR_ZONE_LASTING_TIME`) est en **secondes**, malgré son nom — vérifié au chronomètre.
+- L'heure est réécrite dans le boîtier (caractéristique `TIME`) à chaque connexion, pour que les pauses datées fonctionnent.
+- La trame d'arrosage manuel (`MANUAL`) fait 64 octets (2 par zone, jusqu'à 32 zones), même pour un boîtier 2 zones.
 
 ---
 
-## 🐞 Limitations connues / zones d'incertitude
+## 🐞 Limitations
 
-*Testé uniquement sur un seul boîtier Rain Pure Vision 2 zones.** Le comportement sur d'autres variantes (plus de zones, autre génération) n'est pas garanti.
-- L'UUID exact de la caractéristique `TIME` (`0200F004`) a été déduit par analogie avec les autres caractéristiques du même service, mais n'a pas pu être confirmé ligne à ligne dans le code source (la fonction correspondante référence le nom `'TIME'`, pas l'UUID brut). Ça fonctionne dans mes tests, mais à surveiller.
-- Les bits `STATUS_FLAG` (erreurs matérielles, mot de passe par défaut non changé, etc.) sont décodés d'après la fonction `UIntToStatus` de l'application officielle. Leur position peut varier selon le modèle de boîtier : elle n'a été vérifiée que sur un boîtier 2 zones. Les indicateurs « historique plein » des zones 3 à 5 ne sont pas exposés.
-- Le cycle de déconnexion à 60 secondes peut occasionnellement retarder la remontée d'un état (ex. juste après une pause), sans empêcher le fonctionnement.
-  
----
-
-## 🙏 Appel aux développeurs
-
-Si vous maîtrisez ESPHome, le C++, ou le protocole BLE, ce projet a clairement besoin d'un regard professionnel : gestion d'erreurs plus robuste, simplification du YAML, meilleure gestion de la reconnexion, support d'autres variantes du boîtier (plus de zones)... Toute contribution, review, ou simple retour d'expérience est la bienvenue. Merci d'avance à qui voudra bien y jeter un œil !
+- **Testé sur un seul boîtier Rain Pure Vision 2 zones.** Le comportement sur d'autres variantes (plus de zones, autre génération) n'est pas garanti.
+- L'UUID de la caractéristique `TIME` (`0200F004`) est déduit par analogie avec les autres caractéristiques du service ; il fonctionne, mais n'a pas pu être confirmé dans le code source.
+- Les indicateurs `STATUS_FLAG` (erreurs, mot de passe par défaut…) sont décodés d'après l'application officielle et n'ont été vérifiés que sur un boîtier 2 zones. Les indicateurs « historique plein » des zones 3 à 5 ne sont pas exposés.
 
 ---
 
 ## 🤝 Contribuer
 
-- **Issues** : décrivez votre problème avec autant de détails que possible (logs ESPHome en niveau `DEBUG` ou `VERBOSE`, modèle exact de boîtier, comportement observé vs attendu).
-- **Pull requests** : bienvenues, petites ou grosses. N'hésitez pas à proposer des refactors même s'ils changent la structure du fichier.
+Si vous connaissez ESPHome, le C++ ou le BLE, un regard extérieur est le bienvenu : robustesse, simplification, support d'autres variantes du boîtier…
+
+- **Issues** : joignez les logs ESPHome (niveau `DEBUG`), le modèle exact du boîtier et le comportement observé / attendu.
+- **Pull requests** : bienvenues, petites ou grosses, y compris des refactors.
 
 ---
 
 ## 📄 Licence
 
-Ce projet est publié sous licence [MIT](LICENSE) — libre à vous de le réutiliser, modifier et redistribuer.
+[MIT](LICENSE) — libre de réutiliser, modifier et redistribuer.
 
 ---
 
 ## 🙌 Remerciements
 
-- La communauté [ESPHome](https://esphome.io/) et [Home Assistant](https://www.home-assistant.io/)
-- Ce projet doit beaucoup à l'assistance d'IA conversationnelles (Claude, Grok) pour le débogage et la rédaction du code — d'où l'importance de la relecture communautaire mentionnée plus haut
+Les communautés [ESPHome](https://esphome.io/) et [Home Assistant](https://www.home-assistant.io/).
