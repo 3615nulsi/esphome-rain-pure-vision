@@ -314,7 +314,14 @@ sensor:
     accuracy_decimals: 0
     service_uuid: '0200E000-4201-37BB-EA11-42A458AA4846'
     characteristic_uuid: '0200E003-4201-37BB-EA11-42A458AA4846'
-    notify: true
+    # Pas de notify : OFFPERIODS n'a pas de descripteur CCCD (logs :
+    # "get_descr_by_char_handle error, status=10" puis "Error registering
+    # for notifications") et l'app officielle ne s'y abonne jamais
+    # (startNotification uniquement sur STATUS, DFU, BLEVELS, BSTATS).
+    # Avec notify: true, l'échec d'abonnement laisse le capteur dans un
+    # état "non connecté" : aucune lecture n'aboutit ("Cannot poll, not
+    # connected"), le cache reste vide et la pause n'est jamais confirmée.
+    notify: false
     update_interval: 30s
     lambda: |-
       if (x.size() >= 14) {
