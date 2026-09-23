@@ -55,7 +55,7 @@ All these entities are natively exposed to Home Assistant through the ESPHome in
 
 ## 🧰 Hardware requirements
 
-- A **generic ESP32** board (any basic dev board works)
+- An **ESP32** board (any basic dev board works), either dedicated or already used by another ESPHome device
 - A **Rain Pure Vision 2.0, 2-zone** controller
 - [ESPHome](https://esphome.io/) (latest version recommended, `esp-idf` framework)
 - Home Assistant, if you want to use the entities (not strictly required — the ESPHome API also works standalone)
@@ -64,7 +64,35 @@ All these entities are natively exposed to Home Assistant through the ESPHome in
 
 ## 🚀 Installation
 
-1. **Get your controller's BLE MAC address.** You can find it with a BLE scanning app (nRF Connect, LightBlue...) by looking for the device matching your Rain Pure Vision, or by letting ESPHome log the device during a discovery scan.
+All the logic lives in **`rain_pure_vision.yaml`**, an [ESPHome package](https://esphome.io/components/packages/) that your device downloads straight from this GitHub repository on every compile. Two ways to use it:
+
+### Option A — Add the Rain Pure Vision to an existing ESPHome device
+
+If you already have an ESP32 running ESPHome (sensor, Bluetooth proxy...), just add these lines to its configuration:
+
+```yaml
+substitutions:
+  rain_mac: "AA:BB:CC:DD:EE:FF"   # BLE MAC address of your controller
+  rain_timezone: "Europe/Paris"   # optional (default value)
+  rain_zones: "2"                 # optional (default value)
+
+packages:
+  rain_pure_vision:
+    url: https://github.com/3615nulsi/esphome-rain-pure-vision
+    ref: main
+    files: [rain_pure_vision.yaml]
+    refresh: 1d
+```
+
+Things to keep in mind:
+- The device must be an **ESP32** with Bluetooth (no ESP8266). The `esp-idf` framework is recommended: BLE + Wi-Fi use a lot of memory, especially on an already busy device.
+- If the device is also a **Bluetooth proxy** (`bluetooth_proxy:`), the controller uses one extra BLE connection slot. ESPHome will then show a warning: add `max_connections: 4` under `esp32_ble:`.
+- The package adds its own SNTP clock (used to set the controller's time), even if the device already has `time: homeassistant`: both coexist without any problem.
+- The entities will show up in Home Assistant under that device's name.
+
+### Option B — A dedicated ESP32
+
+1. Start from the example file **`proxy_rain_vision_pure.yml`** (it already contains the `packages:` block above).
 
 2. **Create a `secrets.yaml` file** next to the YAML file, with:
    ```yaml
@@ -75,13 +103,19 @@ All these entities are natively exposed to Home Assistant through the ESPHome in
    ```
    To generate a valid API encryption key (32 bytes, base64-encoded), you can use the ESPHome CLI's `esphome secrets` command, or simply let the ESPHome dashboard generate one automatically when creating the device.
 
-3. **Change the MAC address** in the `ble_client:` block of the YAML file to match your own controller.
+3. **Set `rain_mac`** (and `rain_timezone` if needed) in the `substitutions:` block.
 
-4. **Adjust the number of zones** if needed: `max_value: 2` under `number: Zone to water` corresponds to a 2-zone controller. A controller with more zones hasn't been tested — see the Limitations section.
+### In both cases
 
-5. **Flash** your ESP32 via ESPHome (CLI, dashboard, or VS Code + ESPHome extension).
+- **Controller MAC address**: you can find it with a BLE scanning app (nRF Connect, LightBlue...) by looking for the device matching your Rain Pure Vision, or by letting ESPHome log the device during a discovery scan.
+- **Number of zones**: `rain_zones: "2"` corresponds to a 2-zone controller. A controller with more zones hasn't been tested — see the Limitations section.
+- **Flash** your ESP32 via ESPHome (CLI, dashboard, or VS Code + ESPHome extension), then add the device to Home Assistant via the ESPHome integration (auto-discovery normally, or manual add by IP otherwise).
 
-6. Add the device to Home Assistant via the ESPHome integration (auto-discovery normally, or manual add by IP otherwise).
+### Updates
+
+The package is downloaded again at compile time, at most once a day (`refresh: 1d`): recompiling the device (for instance when updating ESPHome) automatically picks up the latest version. With `ref: main`, you follow the development version. For an irrigation system, you may prefer to pin a published release (e.g. `ref: v1.0.0`, see the repository's *Releases*) and change it when you decide to.
+
+> **Were you using the old all-in-one file?** Replace it with the new `proxy_rain_vision_pure.yml`, keeping the same device name (`proxy-arrosage`): entity names haven't changed, so Home Assistant and the blueprint will keep working without any change.
 
 ---
 
