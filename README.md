@@ -121,20 +121,17 @@ Le package est re-téléchargé à la compilation, au plus une fois par jour (`r
 
 ## 🔍 Comment ça marche
 
-Le protocole a été reconstitué à partir du code JavaScript de l'application officielle (app Ionic/Capacitor), puis vérifié sur le matériel. Quelques points notables :
+Le protocole a été reconstitué à partir du code JavaScript de l'application officielle, puis vérifié sur le matériel. Quelques points notables :
 
 - L'application officielle coupe ses sessions BLE au bout de **~60 secondes** ; le proxy se reconnecte automatiquement si le boîtier coupe la connexion.
-- Le temps restant de la zone en cours (`CURR_ZONE_LASTING_TIME`) est en **secondes**, malgré son nom — vérifié au chronomètre.
 - L'heure est réécrite dans le boîtier (caractéristique `TIME`) à chaque connexion, pour que les pauses datées fonctionnent.
-- La trame d'arrosage manuel (`MANUAL`) fait 64 octets (2 par zone, jusqu'à 32 zones), même pour un boîtier 2 zones.
 
 ---
 
 ## 🐞 Limitations
 
 - **Testé sur un seul boîtier Rain Pure Vision 2 zones.** Le comportement sur d'autres variantes (plus de zones, autre génération) n'est pas garanti.
-- L'UUID de la caractéristique `TIME` (`0200F004`) est déduit par analogie avec les autres caractéristiques du service ; il fonctionne, mais n'a pas pu être confirmé dans le code source.
-- Les indicateurs `STATUS_FLAG` (erreurs, mot de passe par défaut…) sont décodés d'après l'application officielle et n'ont été vérifiés que sur un boîtier 2 zones. Les indicateurs « historique plein » des zones 3 à 5 ne sont pas exposés.
+- Les indicateurs `STATUS_FLAG` (erreurs, mot de passe par défaut…) sont décodés d'après l'application officielle et n'ont été vérifiés que sur un boîtier 2 zones. 
 
 ---
 
